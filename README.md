@@ -102,7 +102,13 @@ npm run find -- "San Onofre"             # Look up park/facility IDs
 docker compose -f docker-compose.prod.yml --env-file packages/database/.env up --build
 ```
 
-Requires `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` in the `.env`. App is at `http://localhost:3000`; the container runs `prisma migrate deploy` on every start.
+Requires `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` in the `.env`. App is at `http://localhost:3001` (host port 3001 → container 3000; Bookshelf owns 3000 on the shared Pi); the container runs `prisma migrate deploy` on every start.
+
+## Deployment
+
+Production runs on a Raspberry Pi 5 (shared with Bookshelf) behind Cloudflare Tunnel at [campingmeow.com](https://campingmeow.com), deployed via GitHub Actions (CI on hosted runners, CD on a self-hosted runner on the Pi). Nightly encrypted backups go to Backblaze B2 with healthchecks.io alerting.
+
+Full setup, troubleshooting, and disaster-recovery runbooks live in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**.
 
 ## Data model
 
