@@ -15,3 +15,38 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// A "place" in ReserveCalifornia terms: a state park containing bookable facilities.
+// rcPlaceId is RC's identifier; our own id stays stable even if RC renumbers.
+model Park {
+  id              String     @id @default(cuid())
+  rcPlaceId       Int        @unique
+  name            String
+  city            String?
+  latitude        Float?
+  longitude       Float?
+  allowWebBooking Boolean    @default(true)
+  // false = disappeared from the RC catalog; kept for watch/history integrity
+  active          Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  facilities      Facility[]
+}
+
+// A bookable campground within a park. No lat/long in the RC catalog —
+// distance features use the parent park's coordinates.
+model Facility {
+  id              String   @id @default(cuid())
+  rcFacilityId    Int      @unique
+  name            String
+  // RC FacilityType code (e.g. 2 = campground); kept raw for filtering later
+  facilityType    Int?
+  allowWebBooking Boolean  @default(true)
+  active          Boolean  @default(true)
+  parkId          String
+  park            Park     @relation(fields: [parkId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([parkId])
+}
