@@ -1,14 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="4" fill="#0a0a0f"/>
-  <g>
-    <rect x="6" y="9" width="2.5" height="15" fill="#e8c79a"/>
-    <rect x="9.5" y="11" width="2.5" height="13" fill="#9ec5e8"/>
-    <rect x="13" y="7" width="2.5" height="17" fill="#e8c79a"/>
-    <rect x="16.5" y="10" width="2.5" height="14" fill="#9ec5e8"/>
-    <rect x="20" y="8" width="2.5" height="16" fill="#e8c79a"/>
-    <rect x="23.5" y="12" width="2.5" height="12" fill="#9ec5e8"/>
+  <rect width="32" height="32" rx="4" fill="#16351f"/>
+  <!-- head -->
+  <ellipse cx="16" cy="21" rx="10" ry="8" fill="#e8964f"/>
+  <!-- mean eyes (angry lids drawn over, brim overhangs after) -->
+  <circle cx="12" cy="19.8" r="1.8" fill="#2a1f14"/>
+  <circle cx="20" cy="19.8" r="1.8" fill="#2a1f14"/>
+  <polygon points="9.2,17.4 15,20.2 15,16.4 9.2,16.4" fill="#e8964f"/>
+  <polygon points="22.8,17.4 17,20.2 17,16.4 22.8,16.4" fill="#e8964f"/>
+  <!-- campaign hat pulled low: dome, ears through it, band, brim -->
+  <path d="M8.5 15.5 Q9.5 7.5 15 6.8 L16 5.6 L17 6.8 Q22.5 7.5 23.5 15.5 Z" fill="#c9a86a"/>
+  <polygon points="5.5,4.5 12,9 7,13.5" fill="#e8964f"/>
+  <polygon points="26.5,4.5 20,9 25,13.5" fill="#e8964f"/>
+  <polygon points="6.8,6.7 10.5,9.3 7.6,11.9" fill="#c05a4a"/>
+  <polygon points="25.2,6.7 21.5,9.3 24.4,11.9" fill="#c05a4a"/>
+  <rect x="8.8" y="11.6" width="14.4" height="2.2" fill="#6b4f2a"/>
+  <ellipse cx="16" cy="16" rx="12" ry="2.4" fill="#c9a86a"/>
+  <ellipse cx="16" cy="15.4" rx="12" ry="2.2" fill="#dbbc80"/>
+  <!-- muzzle, nose, frown -->
+  <ellipse cx="16" cy="24.2" rx="4.5" ry="3" fill="#f6c992"/>
+  <polygon points="16,24.6 14.7,23.3 17.3,23.3" fill="#c05a4a"/>
+  <path d="M14.6 25.9 Q16 25 17.4 25.9" stroke="#2a1f14" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+  <!-- whiskers, angled down -->
+  <g stroke="#f6c992" stroke-width="0.9" stroke-linecap="round">
+    <line x1="4" y1="22" x2="9.5" y2="23.2"/>
+    <line x1="4.5" y1="25.5" x2="9.8" y2="25"/>
+    <line x1="28" y1="22" x2="22.5" y2="23.2"/>
+    <line x1="27.5" y1="25.5" x2="22.2" y2="25"/>
   </g>
-  <line x1="5" y1="24.5" x2="27" y2="24.5" stroke="#e8c79a" stroke-width="1"/>
-  <path d="M3 7 L3 3 L7 3" stroke="#e8c79a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-  <path d="M29 25 L29 29 L25 29" stroke="#e8c79a" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 </svg>
