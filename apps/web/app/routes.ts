@@ -9,4 +9,5 @@ export default [
   route("auth/callback", "routes/auth.callback.ts"),
   route("auth/logout", "routes/auth.logout.ts"),
   route("auth/test-login", "routes/auth.test-login.ts"),
+  route("api/catalog-sync", "routes/api.catalog-sync.ts"),
 ] satisfies RouteConfig;

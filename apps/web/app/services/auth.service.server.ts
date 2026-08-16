@@ -13,7 +13,15 @@ export type AuthUser = {
   permissions: string[];
 };
 
-export async function handleCallback(code: string): Promise<{
+// Domain service for authentication: token exchange, session → user
+// resolution, and permission checks. Routes call this, never Auth0 directly.
+export const authService = {
+  handleCallback,
+  getAuthenticatedUser,
+  requirePermission,
+};
+
+async function handleCallback(code: string): Promise<{
   accessToken: string;
   user: AuthUser;
 }> {
@@ -49,7 +57,7 @@ export async function handleCallback(code: string): Promise<{
   };
 }
 
-export async function getAuthenticatedUser(request: Request): Promise<AuthUser | null> {
+async function getAuthenticatedUser(request: Request): Promise<AuthUser | null> {
   if (process.env.E2E_AUTH_BYPASS === "1") {
     const email = await getTestSessionEmail(request);
     if (!email) return null;
@@ -88,7 +96,7 @@ export async function getAuthenticatedUser(request: Request): Promise<AuthUser |
   }
 }
 
-export function requirePermission(user: AuthUser, permission: string): void {
+function requirePermission(user: AuthUser, permission: string): void {
   if (!user.permissions.includes(permission)) {
     logger.warn({ userId: user.id, permission, action: "auth.permission_denied" }, "permission denied");
     throw new ForbiddenError(`User does not have permission: ${permission}`);

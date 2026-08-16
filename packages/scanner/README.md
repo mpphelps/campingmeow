@@ -1,68 +1,38 @@
-# CampingMeow 🏕️
+# @campingmeow/scanner
 
-A tiny Node + TypeScript tool that scouts **ReserveCalifornia** for open campsites
-matching date patterns you care about — e.g. *"any 1-night Saturday→Sunday at
-Crystal Cove's Moro Campground in the next 6 months."*
+Thin typed client for the **ReserveCalifornia** ("RDR") API. This package is
+the data-access layer for RC — it fetches and assembles raw data and contains
+**no business logic**. What counts as an "opening," what matches a watch, and
+when to notify all live in app/worker domain services, not here.
 
-It only **reads** availability and prints what's open. You still book on the
-official site. See [`API.md`](./API.md) for how the (undocumented) API works.
+See [`API.md`](./API.md) for how the (undocumented) API works.
 
-## Setup
+## What it exposes
 
-```bash
-cd campingmeow
-npm install
-```
+- `getAllPlaces()` / `getAllFacilities()` — the full park + campground catalog
+  (one GET each; powers the daily catalog sync)
+- `searchParks(keyword)` — name autocomplete
+- `getFacilities(placeId, startDate)` — expand a park into bookable facilities
+- `getGrid(facilityId, startDate)` — raw availability grid (~3 weeks per call)
+- `fetchFacilityAvailability(facilityId, start, end, delayMs)` — pages the grid
+  across a date range and merges slices into per-site free-night sets
+- Date helpers (`addDays`, `dayOfWeek`, …) shared by callers
 
-Requires Node 20+.
+The API base URL is resolved at runtime from `reservecalifornia.com/config.json`
+(with a hardcoded fallback), so the client survives RC host changes. Requests
+retry on 5xx/429.
 
-## Use
-
-Scan for the openings defined in `src/config.ts`:
-
-```bash
-npm run scan
-```
-
-Example output:
-
-```
-Scanning Crystal Cove — Moro Campground (tent/RV) (facility 447) ... bookable 2026-07-24→2027-01-23, 50 web-bookable sites
-  Sat 2026-09-12  (1n, Sat→Sun (1 night))  2 sites: Standard Campsite #21, Premium Hook Up (E/W) Campsite #3
-  Sat 2026-10-03  (1n, Sat→Sun (1 night))  5 sites: ...
-```
-
-## Configure what to look for
-
-Everything is in [`src/config.ts`](./src/config.ts):
-
-- **`locations`** — one entry per campground (a `facilityId`). Defaults to Crystal
-  Cove Moro Campground (`447`).
-- **`patterns`** — a check-in day-of-week + a number of nights. Ships with
-  `Sat→Sun (1 night)`. Uncomment `Fri→Sun (2 nights)` for full weekends.
-- **`horizonDays`** — how far ahead to look (max ~180; the API only lets you book
-  6 months out).
-- **`earliest`** — optional earliest check-in date.
-
-### Finding IDs for other parks
+## CLI
 
 ```bash
 npm run find -- "San Onofre"
 ```
 
-prints each matching park's `PlaceId` and the `facilityId` of every campground
-inside it. Drop the one you want into `config.ts`.
+Prints each matching park's `PlaceId` and the `FacilityId` of every campground
+inside it. Handy for spot-checking IDs during development.
 
-## Running it on a schedule (optional next step)
+## Etiquette
 
-`npm run scan` is a one-shot check. To turn it into a real cancellation watcher,
-run it on a cron / launchd timer every 15–30 minutes and have it notify you only
-when something *new* appears. That layer (state + email/SMS/push) isn't built yet
-— it's the natural next increment.
-
-## Etiquette / caveats
-
-- These endpoints are undocumented and can change; the client reads the current
-  API base from `reservecalifornia.com/config.json` so it survives host changes.
-- Be polite: there's a `requestDelayMs` between calls. Don't hammer it.
-- This is for personal use to save yourself from refreshing a website by hand.
+- These endpoints are undocumented and can change without notice.
+- Be polite: keep a delay between calls (500ms baseline) and back off on errors.
+- Booking still happens on the official website; we only read availability.

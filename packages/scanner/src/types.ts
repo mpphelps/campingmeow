@@ -22,6 +22,26 @@ export interface SearchPlaceResponse {
   };
 }
 
+// Full-catalog records from GET fd/places / fd/facilities. Both endpoints
+// return many more fields; these are the ones we persist.
+export interface CatalogPlace {
+  PlaceId: number;
+  Name: string;
+  City: string | null;
+  Latitude: number;
+  Longitude: number;
+  AllowWebBooking: boolean;
+  IsWebViewable: boolean;
+}
+
+export interface CatalogFacility {
+  FacilityId: number;
+  PlaceId: number;
+  Name: string;
+  FacilityType: number;
+  AllowWebBooking: boolean;
+}
+
 export interface Slice {
   Date: string; // "yyyy-MM-dd"
   IsFree: boolean;

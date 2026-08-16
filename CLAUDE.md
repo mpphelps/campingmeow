@@ -17,16 +17,13 @@ Campsite reservation finder for California state parks (ReserveCalifornia). User
 ## Monorepo Structure
 - `apps/web` — React Router app (frontend + server routes)
 - `packages/database` — Prisma schema, migrations, and client singleton
-- `packages/scanner` — ReserveCalifornia API client + availability scan CLI (future notification-service core; see `packages/scanner/API.md`)
+- `packages/scanner` — Thin ReserveCalifornia API client, no business logic (see `packages/scanner/API.md`)
 - `packages/ui` — Shared React components
 - `packages/eslint-config` — Shared ESLint configs
 - `packages/typescript-config` — Shared TS configs
 
 ## Backend Architecture (Strict)
-All features must follow three layers:
-1. **Route layer** (`app/routes/`) — Thin. Parse request/form data, call a service, return response. No business logic. No Prisma calls.
-2. **Service layer** (`app/services/`) — Business logic, validation, orchestration. Receives plain data, calls repositories, throws domain errors.
-3. **Repository layer** (`app/repositories/`) — Prisma queries only. One per entity. No business logic. Returns Prisma types or null.
+All features must follow the layered architecture defined in **PROJECT_SPEC.md §7** (routes → services → repositories → display-only UI, service naming, scanner's role). Read that section before writing or reviewing backend code; it is the single source of truth.
 
 ## Key Commands
 ```bash
@@ -81,5 +78,4 @@ npx prisma migrate dev --create-only   # Generate SQL without applying (for revi
 - Route files use React Router v7 typed conventions (`Route.LoaderArgs`, `Route.ComponentProps`)
 - Database package imported as `@campingmeow/database`
 - Prisma client uses `@prisma/adapter-pg` driver adapter (required in Prisma v7)
-- Authorization checks live in the service layer, never in routes or repositories
 - ReserveCalifornia API calls must be polite: resolve base URL from `reservecalifornia.com/config.json`, delay between requests (see `packages/scanner`)

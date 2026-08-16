@@ -2,11 +2,10 @@
   "name": "@campingmeow/scanner",
   "version": "0.1.0",
   "private": true,
-  "description": "Scan ReserveCalifornia for available campsites matching date patterns (e.g. any 1-night Sat->Sun weekend).",
+  "description": "Thin typed client for the ReserveCalifornia (RDR) API: catalog, search, and availability grid.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "scan": "tsx src/scan.ts",
     "find": "tsx src/find.ts",
     "check-types": "tsc --noEmit"
   },
