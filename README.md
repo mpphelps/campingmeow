@@ -19,7 +19,7 @@ Built on the same stack as [Bookshelf](https://github.com/mpphelps/Bookshelf): R
 ```
 apps/web/                       React Router app (routes, services, repos, components)
 packages/database/              Prisma schema, migrations, prisma.config.ts, generated client
-packages/scanner/               ReserveCalifornia API client + availability scanner CLI (see its README)
+packages/scanner/               Thin ReserveCalifornia API client (see its README)
 packages/ui/                    Shared React components (Button, Panel, etc.)
 packages/eslint-config/         Shared ESLint config
 packages/typescript-config/     Shared tsconfig
@@ -29,11 +29,7 @@ docker-compose.yml              Dev: Postgres only (dev + test DBs)
 docker-compose.prod.yml         Prod: app + Postgres (project name `campingmeow-prod`)
 ```
 
-The web app follows a strict three-layer backend pattern:
-
-- **Routes** (`apps/web/app/routes/`) — thin: parse the request, call a service, return a response. No business logic.
-- **Services** (`apps/web/app/services/`) — validation, ownership checks, orchestration. Throw domain errors.
-- **Repositories** (`apps/web/app/repositories/`) — Prisma queries only. One per entity. No cross-entity joins.
+The web app follows a strict layered backend pattern (routes → services → repositories → display-only UI), defined in [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) §7.
 
 ## Getting started
 
@@ -91,8 +87,7 @@ npx prisma generate                      # Regenerate client from schema
 npm run test:e2e                         # Headless Playwright run
 npm run test:e2e:headed                  # With browser UI
 
-# Availability scanner CLI (from packages/scanner)
-npm run scan                             # One-shot scan per src/config.ts
+# ReserveCalifornia helpers (from packages/scanner)
 npm run find -- "San Onofre"             # Look up park/facility IDs
 ```
 

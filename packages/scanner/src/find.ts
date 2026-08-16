@@ -1,5 +1,4 @@
-// Helper to discover PlaceId / FacilityId for any park, so you can fill in
-// src/config.ts for other campgrounds.
+// CLI helper to discover PlaceId / FacilityId for any park.
 //
 //   npm run find -- "Crystal Cove"
 //   npm run find -- "San Onofre"

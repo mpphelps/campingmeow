@@ -49,7 +49,37 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 - Non-California sources.
 - Trend charts (we keep the data; we don't build the UI yet).
 
-## 7. Implementation phases
+## 7. Architecture conventions
+
+Every feature follows the same layers, top to bottom. Each layer only talks to
+the one directly below it.
+
+1. **Routes** (`app/routes/`) — thin. Parse the request, call one service,
+   return its result. No business logic, no Prisma.
+2. **Services** (`app/services/`) — all business logic. Two flavors:
+   - `<thing>Service` — a domain service owning one domain (catalog, watch,
+     auth). Calls repositories.
+   - `<thing>OrchestratorService` — coordinates multiple domain services for a
+     cross-domain flow. Calls domain services, never repositories directly.
+   Services return data already shaped for the UI — components never reshape.
+3. **Repositories** (`app/repositories/`) — thin. Prisma queries only, one per
+   entity, no business logic.
+4. **UI components** — display only. Rendering logic is fine; business logic is
+   not.
+
+Supporting rules:
+
+- Services are exported as named objects (`catalogService`, `authService`), one
+  per file: `<thing>.service.server.ts`. Repositories likewise:
+  `<thing>.repository.server.ts`. The `.server` suffix is load-bearing — it
+  keeps the file out of the client bundle.
+- `packages/scanner` is the data-access layer for the ReserveCalifornia API: a
+  thin typed client, no business logic. It is to RC what repositories are to
+  Postgres.
+- Authorization checks live in the service layer, never in routes or
+  repositories.
+
+## 8. Implementation phases
 
 1. **Catalog** — Park/Facility tables, daily sync job, browse/search UI, favicon.
 2. **Watches** — Watch table, CRUD UI on facility pages, date-pattern form.

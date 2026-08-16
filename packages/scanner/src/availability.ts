@@ -1,8 +1,9 @@
-// Pure availability logic — no network — so it's easy to reason about and test.
+// Paged availability fetching. This stays in the client layer: it only
+// assembles the full grid for a facility (the API returns ~3 weeks per call).
+// Deciding what an "opening" is belongs to domain services, not this package.
 
 import { getGrid } from "./api.js";
-import { addDays, eachDay, sliceKey, type ISODate } from "./dates.js";
-import type { Pattern } from "./config.js";
+import { addDays, type ISODate } from "./dates.js";
 import type { GridResponse } from "./types.js";
 
 /** One bookable site with the set of nights it is free. */
@@ -73,59 +74,6 @@ export async function fetchFacilityAvailability(
   };
 }
 
-/** Does a site have all `nights` consecutive nights free starting at `checkin`? */
-export function isStayFree(
-  site: SiteAvailability,
-  checkin: ISODate,
-  nights: number
-): boolean {
-  for (let i = 0; i < nights; i++) {
-    if (!site.freeNights.has(addDays(checkin, i))) return false;
-  }
-  return true;
-}
-
-export interface Opening {
-  checkin: ISODate;
-  nights: number;
-  patternLabel: string;
-  sites: { unitId: number; name: string }[];
-}
-
-/**
- * Find all openings in a facility that match a pattern (a check-in day-of-week
- * plus a night count), within [rangeStart, rangeEnd].
- */
-export function findOpenings(
-  avail: FacilityAvailability,
-  pattern: Pattern,
-  rangeStart: ISODate,
-  rangeEnd: ISODate,
-  dayOfWeek: (d: ISODate) => string
-): Opening[] {
-  const openings: Opening[] = [];
-  for (const checkin of eachDay(rangeStart, rangeEnd)) {
-    if (dayOfWeek(checkin) !== pattern.checkinDay) continue;
-    const lastNight = addDays(checkin, pattern.nights - 1);
-    if (lastNight > rangeEnd) continue;
-    const matches = avail.sites
-      .filter((s) => isStayFree(s, checkin, pattern.nights))
-      .map((s) => ({ unitId: s.unitId, name: s.name }));
-    if (matches.length > 0) {
-      openings.push({
-        checkin,
-        nights: pattern.nights,
-        patternLabel: pattern.label,
-        sites: matches,
-      });
-    }
-  }
-  return openings;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
-
-// Re-export so scan.ts can build slice keys if needed.
-export { sliceKey };

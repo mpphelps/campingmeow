@@ -2,6 +2,8 @@
 // See API.md for endpoint documentation.
 
 import type {
+  CatalogFacility,
+  CatalogPlace,
   GridResponse,
   ParkMatch,
   FacilitySummary,
@@ -77,6 +79,16 @@ async function rdr<T>(
     }
   }
   throw new Error(`RDR ${path} failed after ${retries + 1} tries: ${String(lastErr)}`);
+}
+
+/** Full park catalog (~300 records, one call). */
+export async function getAllPlaces(): Promise<CatalogPlace[]> {
+  return rdr<CatalogPlace[]>("fd/places");
+}
+
+/** Full facility catalog (~500 records, one call). */
+export async function getAllFacilities(): Promise<CatalogFacility[]> {
+  return rdr<CatalogFacility[]>("fd/facilities");
 }
 
 /** Autocomplete parks by name. */
