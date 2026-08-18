@@ -23,6 +23,35 @@ export const facilityRepository = {
     return result.count;
   },
 
+  async findById(id: string) {
+    return prisma.facility.findUnique({
+      where: { id },
+      include: { park: true },
+    });
+  },
+
+  async countActive() {
+    return prisma.facility.count({ where: { active: true } });
+  },
+
+  async listActiveByIds(ids: string[]) {
+    return prisma.facility.findMany({
+      where: { id: { in: ids }, active: true },
+    });
+  },
+
+  async listActiveWithPark(filter?: { parkIds?: string[]; facilityIds?: string[] }) {
+    return prisma.facility.findMany({
+      where: {
+        active: true,
+        ...(filter?.parkIds ? { parkId: { in: filter.parkIds } } : {}),
+        ...(filter?.facilityIds ? { id: { in: filter.facilityIds } } : {}),
+      },
+      include: { park: true },
+      orderBy: { name: "asc" },
+    });
+  },
+
   async listActiveByParkId(parkId: string) {
     return prisma.facility.findMany({
       where: { parkId, active: true },

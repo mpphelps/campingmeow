@@ -9,7 +9,7 @@ Campsite reservation finder for California state parks (ReserveCalifornia). User
 
 ## Tech Stack
 - **Framework:** React Router v7 with React 19, TypeScript, Vite
-- **Styling:** Tailwind CSS v4, shadcn-style components in `packages/ui`
+- **Styling:** Tailwind CSS v4, shadcn-style components in `packages/ui` wrapping Radix primitives (`radix-ui`) — never hand-roll a widget Radix provides; add the shadcn wrapper instead
 - **ORM:** Prisma v7 with PostgreSQL 17 (Docker), `@prisma/adapter-pg` driver adapter
 - **Monorepo:** Turborepo with npm workspaces
 - **Testing:** Playwright (e2e)
@@ -50,7 +50,9 @@ npx prisma migrate dev --create-only   # Generate SQL without applying (for revi
 
 ## Data Model
 - **User** — id, email (unique), firstName, lastName, timestamps. Synced from Auth0 on first login.
-- (Coming: Watch — a campground + date-pattern subscription; notification delivery records.)
+- **Park** — RC place mirrored by the daily catalog sync; own cuid PK, `rcPlaceId` unique, lat/long, `active` flag (vanished records deactivated, not deleted).
+- **Facility** — bookable campground within a Park; `rcFacilityId` unique, no lat/long (RC only has park-level coords).
+- (Coming: Watch, AvailabilitySlot/Event, SweepRun — see PROJECT_SPEC.md §3.)
 
 ## Migration Policy
 - Always inspect generated SQL before applying (`--create-only`)

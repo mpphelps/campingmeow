@@ -85,6 +85,9 @@ export default defineConfig({
       DATABASE_URL: process.env.DATABASE_URL!,
       SESSION_SECRET: process.env.SESSION_SECRET!,
       E2E_AUTH_BYPASS: process.env.E2E_AUTH_BYPASS!,
+      // Tests must never touch the real ReserveCalifornia API: seeded facility
+      // ids are fake, and background scans fire without a test awaiting them.
+      RC_API_OFFLINE: "1",
       AUTH0_DOMAIN: process.env.AUTH0_DOMAIN ?? "test.auth0.com",
       AUTH0_CLIENT_ID: process.env.AUTH0_CLIENT_ID ?? "test-client-id",
       AUTH0_CLIENT_SECRET: process.env.AUTH0_CLIENT_SECRET ?? "test-client-secret",

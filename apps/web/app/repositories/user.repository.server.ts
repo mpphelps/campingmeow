@@ -18,4 +18,15 @@ export const userRepository = {
       orderBy: { createdAt: "desc" },
     });
   },
+
+  async listAllWithWatchCounts() {
+    return prisma.user.findMany({
+      include: { _count: { select: { watches: { where: { active: true } } } } },
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  async count() {
+    return prisma.user.count();
+  },
 };

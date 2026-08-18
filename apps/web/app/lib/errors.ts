@@ -20,28 +20,28 @@ export function ErrorLookup(status: number): { defaultMicroLabel: string; defaul
   switch (status) {
     case 404:
       return {
-        defaultMicroLabel: "Record Sealed",
-        defaultDescription: "This record could not be retrieved.",
+        defaultMicroLabel: "Not found",
+        defaultDescription: "We couldn't find that page. It may have moved or been removed from the catalog.",
       };
     case 403:
       return {
-        defaultMicroLabel: "Access Denied",
-        defaultDescription: "You do not have permission to access this record.",
+        defaultMicroLabel: "Access denied",
+        defaultDescription: "You don't have permission to view this.",
       };
     case 422:
       return {
-        defaultMicroLabel: "Validation Error",
-        defaultDescription: "There were validation errors with your submission.",
+        defaultMicroLabel: "Check your entries",
+        defaultDescription: "Some fields need fixing before we can save this.",
       };
     case 500:
       return {
-        defaultMicroLabel: "System Fault",
-        defaultDescription: "An unexpected error occurred on the system.",
+        defaultMicroLabel: "Something went wrong",
+        defaultDescription: "We hit an unexpected problem. Try again in a moment.",
       };
     default:
       return {
-        defaultMicroLabel: "Error",
-        defaultDescription: "An unexpected error occurred.",
+        defaultMicroLabel: "Something went wrong",
+        defaultDescription: "We hit an unexpected problem.",
       };
   }
 }

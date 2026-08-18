@@ -24,10 +24,48 @@ export const parkRepository = {
     return result.count;
   },
 
-  async listActive() {
+  async searchActive(query: string | null) {
     return prisma.park.findMany({
-      where: { active: true },
+      where: {
+        active: true,
+        ...(query
+          ? {
+              OR: [
+                { name: { contains: query, mode: "insensitive" as const } },
+                { city: { contains: query, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      },
+      include: { _count: { select: { facilities: { where: { active: true } } } } },
       orderBy: { name: "asc" },
     });
+  },
+
+  async searchActiveWithFacilities(query: string | null) {
+    return prisma.park.findMany({
+      where: {
+        active: true,
+        facilities: { some: { active: true } },
+        ...(query
+          ? {
+              OR: [
+                { name: { contains: query, mode: "insensitive" as const } },
+                { city: { contains: query, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      },
+      include: { facilities: { where: { active: true }, orderBy: { name: "asc" } } },
+      orderBy: { name: "asc" },
+    });
+  },
+
+  async findById(id: string) {
+    return prisma.park.findUnique({ where: { id } });
+  },
+
+  async countActive() {
+    return prisma.park.count({ where: { active: true } });
   },
 };

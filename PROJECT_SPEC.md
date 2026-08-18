@@ -8,24 +8,26 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 
 1. **Catalog.** Sync all parks (~299) and campground facilities (~517) from ReserveCalifornia daily, including lat/long. Facilities that disappear from the API are marked inactive, never deleted — this doubles as our recovery path if IDs change.
 2. **Browse.** Users can browse and search the catalog of parks and facilities.
-3. **Watches.** A user creates a watch on a facility with a date pattern: a set of check-in weekdays, a number of nights (1–7), and optional start/end date bounds. Example: "any Friday, 2 nights, June–August."
+3. **Watches.** A user creates a watch on one or more facilities (across any parks) with a shared date pattern: check-in weekdays, nights (1–7), and optional check-in date bounds. Example: "any Friday, 2 nights, June–August — at Moro Campground or San Mateo." Unbounded watches cover the full booking window and roll forward with it; a bounded watch whose end date has passed is auto-deactivated by the scanner.
 4. **Scanning.** A background worker scans only watched facilities, on repeat, across the full 6-month booking window. When a watch is created for a facility not yet in rotation, that facility is scanned immediately so the user sees data right away.
-5. **Availability state.** One row per (facility, unit, date) holding current availability, upserted each scan. Rows for past dates are kept for future trending features.
+5. **Availability state.** One row per (facility, unit, date) holding current availability, refreshed each scan. Rows for past dates are kept for future trending features.
+5b. **Search with freshness.** Users can check availability for selected campgrounds and a date pattern without creating a watch. The page answers immediately from our database, then re-scans any campground last scanned more than **5 minutes** ago in the background, streaming each result back over server-sent events with a progress bar. Nobody waits on a refresh: results appear at once and improve as scans land. Closing the page stops the scans. A campground never scanned says so explicitly rather than reporting "nothing open"; one whose refresh fails says it is showing stored data.
 6. **Notifications.** Email only (free-tier provider such as Resend). Sent when a slot flips unavailable → available and matches a watch. No repeat emails while the slot stays open. Email links to the facility's page on ReserveCalifornia.
 7. **Politeness.** Delay between API calls (500ms baseline), back off on errors. We are a guest on an undocumented API.
 8. **Monitoring.** Track sweep duration, emails sent per day, and number of watched facilities. If sweeps get slow we miss cancellations; if emails spike we hit provider limits. These metrics must be visible (admin panel) before we need them.
-9. **Admin panel.** Admin-only page: list users, see each user's watches, remove/ban users, and view the health metrics above.
+9. **Admin panel.** Admin-only page: list users, see each user's watches, remove/ban users, view the health metrics above, run a catalog sync, and start an availability sweep of either the watched campgrounds or the entire catalog (~500 campgrounds, ~1 hour). Sweeps run in the background with live progress.
 10. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and checked in the service layer (same pattern as auth today).
-11. **Location search.** "Facilities near me" using browser geolocation and haversine distance on stored lat/long. Geocoding only if the user types an address.
+11. **Location search.** "Parks near me" by haversine distance on stored park lat/long. A typed address/city/ZIP is the primary input (geocoded server-side via OpenStreetMap Nominatim — free, throttled to 1 req/sec, cached); browser geolocation is a secondary option because VPNs make it unreliable.
 12. **Branding.** CampingMeow favicon (replace the Bookshelf icon). Mascot: a cat in a Super Troopers hat asking if you want to go camping right meow.
 
 ## 3. Data model
 
 - **User** — exists today (Auth0 sync). Add role.
-- **Park** — RC place id, name, lat/long, active flag.
-- **Facility** — RC facility id, name, parent park, lat/long, active flag.
-- **Watch** — user, facility, check-in weekdays, nights, optional date bounds, active flag.
-- **AvailabilitySlot** — facility, unit id, date, available flag, last-seen timestamp. Current state; past dates retained.
+- **Park** — RC place id, name, city, lat/long, active flag. Coordinates power distance search.
+- **Facility** — RC facility id, name, parent park, active flag, `lastScannedAt` (null = never scanned). No lat/long: RC only has park-level coordinates.
+- **Watch** — user, check-in weekdays, nights, optional date bounds, active flag.
+- **WatchFacility** — join table: the facilities a watch covers (one pattern, many campgrounds).
+- **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated timestamp. Unique per (facility, unit, date). Every night in the scanned window is stored, taken ones included, so a search can tell "booked" from "never scanned".
 - **AvailabilityEvent** — append-only log of open/close transitions. Powers notification dedup, trending later, and the emails-per-day metric.
 - **SweepRun** — when a sweep started/finished, facilities scanned, errors. Powers the sweep-duration metric.
 
@@ -76,8 +78,27 @@ Supporting rules:
 - `packages/scanner` is the data-access layer for the ReserveCalifornia API: a
   thin typed client, no business logic. It is to RC what repositories are to
   Postgres.
+- **Pages never crash.** Every page route exports
+  `ErrorBoundary` (re-export `PageErrorBoundary`), so a failure keeps the app
+  shell and surfaces as a toast plus a recoverable inline message — never a
+  bare fault page. Expected failures (validation) come back as data the form
+  renders inline; unexpected ones become the toast. Services throw typed
+  errors (`ValidationError`, `ForbiddenError`); routes translate them to
+  responses.
+- UI is built from shadcn-style components in `packages/ui`, which wrap Radix
+  primitives (`radix-ui`). Never hand-roll a widget that Radix already
+  provides (accordion, checkbox, radio group, dialog, tabs, tooltip, …) — add
+  the shadcn wrapper to `packages/ui/src/components/` and use it. Hand-rolled
+  interactive markup loses keyboard support, ARIA state, and focus management.
 - Authorization checks live in the service layer, never in routes or
   repositories.
+- **Slow work streams, it doesn't block.** Anything that takes more than a
+  second or two answers from storage first and pushes updates over server-sent
+  events (`text/event-stream` resource route). The domain service exposes it as
+  an async generator taking an `AbortSignal`; the route only serialises frames.
+  Each event carries a complete replacement snapshot, so the UI swaps state in
+  rather than merging — the same "services return UI-ready shapes" rule. The
+  signal must actually stop the work: a closed tab means nobody is waiting.
 
 ## 8. Implementation phases
 
