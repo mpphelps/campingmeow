@@ -1,6 +1,7 @@
 // Thin typed client for the ReserveCalifornia ("RDR") backend.
 // See API.md for endpoint documentation.
 
+import { acquireSlot, drainQueue } from "./rate-limit.js";
 import type {
   CatalogFacility,
   CatalogPlace,
@@ -18,6 +19,8 @@ const UA =
   "(KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 let cachedBase: string | null = null;
+/** Single-flight guard: see getBaseUrl. */
+let baseInFlight: Promise<string> | null = null;
 
 /**
  * Hard off-switch for every call to ReserveCalifornia. The e2e suite sets it so
@@ -38,6 +41,18 @@ function assertOnline(): void {
 export async function getBaseUrl(): Promise<string> {
   assertOnline();
   if (cachedBase) return cachedBase;
+  // Single-flight. On a cold start every queued scan calls this at once, and
+  // without the guard each one fires its own config.json request — a burst at
+  // reservecalifornia.com before we've made a single API call.
+  baseInFlight ??= resolveBaseUrl().finally(() => {
+    baseInFlight = null;
+  });
+  return baseInFlight;
+}
+
+async function resolveBaseUrl(): Promise<string> {
+  // Same host family as the API, so it comes out of the same budget.
+  await acquireSlot();
   try {
     const res = await fetch("https://reservecalifornia.com/config.json", {
       headers: { "User-Agent": UA },
@@ -113,6 +128,14 @@ async function rdr<T>(
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Every request — first try or retry — waits its turn at the global gate,
+    // so concurrency can never raise the rate, only lengthen the queue.
+    await acquireSlot();
+    // The breaker may have tripped while we were queued behind someone else.
+    if (Date.now() < blockedUntil) {
+      throw new RateLimitedError(new Date(blockedUntil));
+    }
+
     let res: Response;
     try {
       res = await fetch(base + path, {
@@ -127,6 +150,8 @@ async function rdr<T>(
     } catch (err) {
       // Connection-level failure (DNS, reset, timeout) — worth another go.
       lastErr = err;
+      // Extra backoff on top of the gate: a struggling server needs more than
+      // the usual one-second gap.
       if (attempt < retries) await sleep(2000 * 2 ** attempt);
       continue;
     }
@@ -137,7 +162,11 @@ async function rdr<T>(
     if (res.status === 429 || res.status === 403) {
       const wait = parseRetryAfter(res.headers.get("retry-after")) ?? DEFAULT_BLOCK_MS;
       blockedUntil = Date.now() + Math.max(wait, DEFAULT_BLOCK_MS);
-      throw new RateLimitedError(new Date(blockedUntil));
+      const blocked = new RateLimitedError(new Date(blockedUntil));
+      // Anyone still queued would be refused too — fail them now rather than
+      // trickling out doomed requests one per second.
+      drainQueue(blocked);
+      throw blocked;
     }
 
     // Sporadic 5xx under load; those really are transient.

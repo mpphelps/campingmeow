@@ -64,12 +64,15 @@ const FALLBACK_STEP_DAYS = 14;
  * whatever the response actually covered rather than assuming a fixed step: a
  * hardcoded 14-day step re-fetched a week of slices on every call, and would
  * silently leave gaps if the cap ever changed.
+ *
+ * Pacing is not this function's job: every call inside goes through the global
+ * rate gate (see rate-limit.ts), so it runs as fast as the process budget
+ * allows and no faster.
  */
 export async function fetchFacilityAvailability(
   facilityId: number,
   startDate: ISODate,
-  endDate: ISODate,
-  delayMs: number
+  endDate: ISODate
 ): Promise<FacilityAvailability> {
   const sites = new Map<number, SiteAvailability>();
   let facilityName = `Facility ${facilityId}`;
@@ -93,7 +96,6 @@ export async function fetchFacilityAvailability(
     if (maxDate && next > maxDate) break;
 
     cursor = next;
-    if (cursor <= endDate) await sleep(delayMs);
   }
 
   return {
@@ -102,8 +104,4 @@ export async function fetchFacilityAvailability(
     maxDate,
     sites: [...sites.values()],
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

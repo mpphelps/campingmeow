@@ -46,13 +46,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Campgrounds", value: dashboard.stats.facilityCount },
     { label: "Active watches", value: dashboard.stats.watchCount },
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
+    { label: "Requests queued", value: dashboard.queueDepth },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-6">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">

@@ -4,6 +4,7 @@ import {
   eachDay,
   fetchFacilityAvailability,
   fmt,
+  getQueueDepth,
   getRateLimitState,
   RateLimitedError,
   type ISODate,
@@ -17,20 +18,9 @@ import { watchRepository } from "../repositories/watch.repository.server";
 import { authService, type AuthUser } from "./auth.service.server";
 import { ADMIN_PERMISSION } from "./admin.service.server";
 
-/**
- * Politeness delay between ReserveCalifornia grid calls. Matches camply
- * (juftin/camply), which has run against this API for years at
- * `ratelimit.limits(calls=1, period=1)` — 1 request/second. That is hotter
- * than the ~30-40/min soft limit reported elsewhere, but it is the rate a
- * mature client demonstrably sustains.
- *
- * This is the one dial the whole scanning budget hangs off: raising it slows
- * every sweep proportionally, lowering it risks an IP-level block that takes
- * the whole app down, not just the scan. Note camply spreads its load over
- * thousands of users' own IPs in short bursts, where we are one Pi running
- * continuously — so treat 1s as a ceiling, not a target to beat.
- */
-const REQUEST_DELAY_MS = 1000;
+// Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
+// packages/scanner/src/rate-limit.ts), not here — otherwise concurrent callers
+// each pace themselves and the real rate is however many are running at once.
 /** How far ahead we scan; ReserveCalifornia books ~6 months out. */
 const HORIZON_DAYS = 180;
 /** Stored availability older than this is refreshed after a search answers. */
@@ -144,6 +134,7 @@ export const availabilityService = {
   searchOpenings,
   refreshSearch,
   getRateLimitState,
+  getQueueDepth,
   scanFacility,
   scanWatchedFacilities,
   startSweep,
@@ -390,11 +381,30 @@ function allNightsFree(freeNights: Set<ISODate>, checkin: ISODate, nights: numbe
 // --------------------------------------------------------------- write path
 
 /**
+ * Scans currently running, keyed by facility id. Two people searching the same
+ * campground — or a search overlapping a sweep — would otherwise both scan it:
+ * duplicate requests out of a budget we can't afford, and two `replaceWindow`
+ * transactions racing over the same rows. The second caller waits on the first.
+ */
+const inFlightScans = new Map<string, Promise<ScanSummary>>();
+
+/**
  * Scan one campground's full booking window and store the result. This is the
  * only path that talks to ReserveCalifornia; the Phase 3 worker will call it
  * on a loop.
  */
-async function scanFacility(facilityId: string): Promise<ScanSummary> {
+function scanFacility(facilityId: string): Promise<ScanSummary> {
+  const existing = inFlightScans.get(facilityId);
+  if (existing) {
+    logger.debug({ action: "scan.facility.joined", facilityId }, "joined an in-flight scan");
+    return existing;
+  }
+  const scan = runScan(facilityId).finally(() => inFlightScans.delete(facilityId));
+  inFlightScans.set(facilityId, scan);
+  return scan;
+}
+
+async function runScan(facilityId: string): Promise<ScanSummary> {
   const facility = await facilityRepository.findById(facilityId);
   if (!facility) throw new ValidationError({ facilityId: "Unknown campground." });
 
@@ -402,7 +412,7 @@ async function scanFacility(facilityId: string): Promise<ScanSummary> {
   const end = addDays(start, HORIZON_DAYS);
   logger.info({ action: "scan.facility.start", facilityId, rcFacilityId: facility.rcFacilityId }, "scanning facility");
 
-  const availability = await fetchFacilityAvailability(facility.rcFacilityId, start, end, REQUEST_DELAY_MS);
+  const availability = await fetchFacilityAvailability(facility.rcFacilityId, start, end);
 
   // The grid only reports free nights per site; every date in the window that
   // a site is not free is stored as taken, so searches can tell the

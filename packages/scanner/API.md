@@ -199,8 +199,19 @@ Reported thresholds (not officially published, treat as a working assumption):
   **15 minutes to several hours**.
 
 On a single-IP deployment that penalty takes the whole app down, not just the
-scan, so the scanner holds one request every 2.5s (~23/min) and this package
-trips a circuit breaker on the first 429/403 rather than retrying:
+scan, so this package owns pacing for the whole process:
+
+- **Global rate gate** (`rate-limit.ts`): every request — including the
+  `config.json` base-URL lookup, and including retries — queues for a slot
+  released once per second. A per-caller delay does not work: 20 concurrent
+  scans each pacing themselves is 20 req/s. Callers cannot opt out; they queue.
+- Backlog is capped (200 waiters); past that `ScanQueueFullError` is thrown
+  rather than growing an unbounded queue.
+- `getBaseUrl()` is single-flight, so a cold start with many queued scans makes
+  one `config.json` request, not one per caller.
+
+On top of that it trips a circuit breaker on the first 429/403 rather than
+retrying:
 
 - `RateLimitedError` is thrown, distinct from ordinary failures, so callers
   abandon the whole batch instead of moving to the next item.
@@ -208,8 +219,12 @@ trips a circuit breaker on the first 429/403 rather than retrying:
   block expires (`Retry-After` if given, floor of 15 minutes).
 - `getRateLimitState()` reports it for the admin panel.
 
+- Tripping the breaker also drains the queue: everyone waiting would be
+  refused anyway, so they fail immediately instead of trickling out doomed
+  requests one per second.
+
 Never retry a 429 — it deepens the penalty. Only 5xx and connection errors are
-retried, with exponential backoff.
+retried, with exponential backoff (on top of the gate's one-second spacing).
 
 ---
 
