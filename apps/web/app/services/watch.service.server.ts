@@ -1,5 +1,5 @@
 import { ForbiddenError, ValidationError } from "~/lib/errors";
-import { MAX_WATCH_FACILITIES } from "~/lib/limits";
+import { MAX_WATCHES_PER_USER, MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { watchRepository } from "../repositories/watch.repository.server";
@@ -71,6 +71,18 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
     const facilities = await facilityRepository.listActiveByIds(facilityIds);
     if (facilities.length !== facilityIds.length) {
       fields.facilityIds = "One or more campgrounds are unknown.";
+    }
+  }
+
+  // Checked last so a user at the cap still sees any other problems with the
+  // form, rather than fixing them one round-trip at a time.
+  if (Object.keys(fields).length === 0) {
+    const existing = await watchRepository.countActiveByUserId(userId);
+    if (existing >= MAX_WATCHES_PER_USER) {
+      fields.facilityIds =
+        MAX_WATCHES_PER_USER === 1
+          ? "You already have a watch. Delete it first — one watch per person while we're in early access."
+          : `You already have ${existing} watches, which is the limit of ${MAX_WATCHES_PER_USER}.`;
     }
   }
 

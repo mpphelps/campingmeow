@@ -124,15 +124,27 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                     style={{ width: `${sweepState.total ? Math.round((sweepState.done / sweepState.total) * 100) : 0}%` }}
                   />
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {sweepState.scope === "all" ? "Full sweep" : "Watched sweep"}: {sweepState.done} of {sweepState.total}
-                  {sweepState.failed > 0 ? ` · ${sweepState.failed} failed` : ""}
-                  {sweepState.currentFacility ? ` · last: ${sweepState.currentFacility}` : ""}
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    {sweepState.scope === "all" ? "Full sweep" : "Watched sweep"}: {sweepState.done} of {sweepState.total}
+                    {sweepState.failed > 0 ? ` · ${sweepState.failed} failed` : ""}
+                    {sweepState.currentFacility ? ` · last: ${sweepState.currentFacility}` : ""}
+                  </p>
+                  <sweep.Form method="post" action="/api/scan-watched">
+                    <input type="hidden" name="intent" value="cancel" />
+                    <Button type="submit" variant="outline" size="sm">
+                      Stop sweep
+                    </Button>
+                  </sweep.Form>
+                </div>
               </div>
             ) : sweepState.finishedAt ? (
               <p className="mt-3 text-sm text-muted-foreground">
-                {sweepState.blockedUntil ? "Last sweep stopped early (rate limited)" : "Last sweep finished"}{" "}
+                {sweepState.cancelled
+                  ? "Last sweep stopped by an admin"
+                  : sweepState.blockedUntil
+                    ? "Last sweep stopped early (rate limited)"
+                    : "Last sweep finished"}{" "}
                 {new Date(sweepState.finishedAt).toLocaleTimeString()}: {sweepState.done} campground
                 {sweepState.done === 1 ? "" : "s"}
                 {sweepState.failed > 0 ? `, ${sweepState.failed} failed` : ""}.

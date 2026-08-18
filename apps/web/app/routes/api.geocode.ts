@@ -1,8 +1,19 @@
 import { ValidationError } from "~/lib/errors";
+import { authService } from "~/services/auth.service.server";
 import { geocodeService } from "~/services/geocode.service.server";
 import type { Route } from "./+types/api.geocode";
 
+/**
+ * Signed-in only: this proxies OpenStreetMap Nominatim, whose usage policy caps
+ * us at 1 request/second for the whole deployment. Left public it is an open
+ * proxy, and anyone could burn that budget and get our IP blocked.
+ */
 export async function loader({ request }: Route.LoaderArgs) {
+  const user = await authService.getAuthenticatedUser(request);
+  if (!user) {
+    return Response.json({ error: "Sign in to search by address.", authRequired: true }, { status: 401 });
+  }
+
   const query = new URL(request.url).searchParams.get("q");
   try {
     const result = await geocodeService.lookup(query);

@@ -22,3 +22,12 @@ export const MAX_SEARCH_FACILITIES = 10;
  * sweep.
  */
 export const MAX_WATCH_FACILITIES = 20;
+
+/**
+ * Active watches one user may hold. Deliberately 1 while scanning is a single
+ * in-process loop: a watch is swept forever, so per-user cost is unbounded
+ * without this, and `MAX_WATCH_FACILITIES` alone caps only one watch's size,
+ * not how many a user creates. Raise it once the worker owns scanning and we
+ * can measure total watched campgrounds against sweep cadence.
+ */
+export const MAX_WATCHES_PER_USER = 1;

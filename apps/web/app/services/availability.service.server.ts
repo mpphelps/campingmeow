@@ -108,6 +108,8 @@ export interface SweepState {
   currentFacility: string | null;
   /** Set when a sweep stopped early because we got rate-limited. */
   blockedUntil: string | null;
+  /** True when an admin stopped the last sweep by hand. */
+  cancelled: boolean;
 }
 
 /**
@@ -125,7 +127,15 @@ let sweepState: SweepState = {
   finishedAt: null,
   currentFacility: null,
   blockedUntil: null,
+  cancelled: false,
 };
+
+/**
+ * Raised between campgrounds to stop a running sweep. A full sweep is ~1.5
+ * hours of continuous requests, so an admin who starts one by mistake needs a
+ * way out that isn't restarting the server.
+ */
+let cancelRequested = false;
 
 // Domain service for campsite availability.
 //   Write path: scan ReserveCalifornia and store what we saw.
@@ -137,6 +147,7 @@ export const availabilityService = {
   scanFacility,
   scanWatchedFacilities,
   startSweep,
+  cancelSweep,
   getSweepState,
 };
 
@@ -463,15 +474,40 @@ async function startSweep(user: AuthUser, scope: "watched" | "all"): Promise<Swe
     finishedAt: null,
     currentFacility: null,
     blockedUntil: null,
+    cancelled: false,
   };
+  cancelRequested = false;
   logger.info({ action: "sweep.start", scope, facilities: facilityIds.length, userId: user.id }, "sweep started");
 
   void runSweep(facilityIds);
   return sweepState;
 }
 
+/** Ask a running sweep to stop after the campground in flight. Admin-only. */
+async function cancelSweep(user: AuthUser): Promise<SweepState> {
+  authService.requirePermission(user, ADMIN_PERMISSION);
+  if (!sweepState.running) return sweepState;
+  cancelRequested = true;
+  logger.info({ action: "sweep.cancel_requested", userId: user.id, done: sweepState.done }, "sweep cancellation requested");
+  return sweepState;
+}
+
 async function runSweep(facilityIds: string[]): Promise<void> {
   for (const facilityId of facilityIds) {
+    // Checked between campgrounds: the scan in flight still finishes, so we
+    // never leave a half-written window behind.
+    if (cancelRequested) {
+      logger.info({ action: "sweep.cancelled", done: sweepState.done, total: sweepState.total }, "sweep cancelled");
+      sweepState = {
+        ...sweepState,
+        running: false,
+        currentFacility: null,
+        finishedAt: new Date().toISOString(),
+        cancelled: true,
+      };
+      cancelRequested = false;
+      return;
+    }
     try {
       const summary = await scanFacility(facilityId);
       sweepState = { ...sweepState, done: sweepState.done + 1, currentFacility: summary.facilityName };

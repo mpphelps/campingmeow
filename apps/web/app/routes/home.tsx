@@ -144,11 +144,17 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const navigate = useNavigate();
 
   // Geocoding runs server-side (the browser CSP blocks third-party calls).
-  const geocoder = useFetcher<{ latitude: number; longitude: number; label: string } | { error: string }>();
+  const geocoder = useFetcher<
+    { latitude: number; longitude: number; label: string } | { error: string; authRequired?: boolean }
+  >();
   useEffect(() => {
     if (!geocoder.data) return;
     if ("error" in geocoder.data) {
-      toast({ title: "Couldn't find that place", description: geocoder.data.error, variant: "destructive" });
+      toast({
+        title: geocoder.data.authRequired ? "Sign in to search by address" : "Couldn't find that place",
+        description: geocoder.data.error,
+        variant: "destructive",
+      });
       return;
     }
     setOrigin(geocoder.data);

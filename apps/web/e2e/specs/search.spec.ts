@@ -7,6 +7,10 @@ import { createPark, createFacility, createSlots, nextWeekday, isoDate } from ".
 // which makes every ReserveCalifornia call throw before it leaves the process — a belt-and-
 // braces guard so no test, and no background scan a test kicks off, can hit the live API.
 test.describe("search page — form only (no live data)", () => {
+  // Signed in: the live-refresh stream and the geocoder are members-only now, and
+  // the never-scanned case below needs the stream to run (and fail) to be reached.
+  test.use({ user: { email: "searcher@example.com", firstName: "Search", lastName: "Er" } });
+
   test("renders the form for valid facilities without requesting results", async ({ page }) => {
     const park = await createPark({ name: "Sequoia" });
     const facility = await createFacility({ name: "Lodgepole", parkId: park.id });
@@ -75,6 +79,10 @@ test.describe("search page — form only (no live data)", () => {
 });
 
 test.describe("search page — results from stored availability", () => {
+  // Signed in: the never-scanned case below needs the members-only refresh stream
+  // to run (and fail, under RC_API_OFFLINE) before the row settles.
+  test.use({ user: { email: "stored@example.com", firstName: "Stored", lastName: "Data" } });
+
   test("shows openings that match seeded free nights", async ({ page }) => {
     const park = await createPark({ name: "Yosemite" });
     const facility = await createFacility({ name: "Upper Pines", parkId: park.id, lastScannedAt: new Date() });
@@ -131,6 +139,8 @@ test.describe("search page — results from stored availability", () => {
 // A search whose campgrounds are all fresh has nothing to refresh, so the page must not
 // open a progress stream at all — no progress bar, no ReserveCalifornia calls.
 test.describe("search page — progress stream", () => {
+  test.use({ user: { email: "streamer@example.com", firstName: "Stream", lastName: "Er" } });
+
   test("shows no progress bar when every campground is already fresh", async ({ page }) => {
     const park = await createPark({ name: "Point Reyes" });
     const facility = await createFacility({ name: "Sky Camp", parkId: park.id, lastScannedAt: new Date() });
@@ -162,6 +172,8 @@ test.describe("search page — progress stream", () => {
 // The geocoder proxies to OpenStreetMap Nominatim (external, rate-limited to 1 req/sec).
 // Only the short-query validation path is safe to test — it returns before any network call.
 test.describe("geocode endpoint", () => {
+  test.use({ user: { email: "geo@example.com", firstName: "Geo", lastName: "Coder" } });
+
   test("returns 422 for a too-short query without calling the external geocoder", async ({ page }) => {
     const response = await page.request.get("/api/geocode?q=NY");
     expect(response.status()).toBe(422);
@@ -206,5 +218,50 @@ test.describe("search limits", () => {
 
     await expect(page.getByText("matching check-in date", { exact: false })).toBeVisible();
     await expect(page.getByText("pick at most 10", { exact: false })).toHaveCount(0);
+  });
+});
+
+// Both endpoints spend an external budget (ReserveCalifornia, Nominatim), so
+// neither is public. Signed-out visitors still get stored data, just no refresh.
+test.describe("api auth — logged out", () => {
+  test.use({ user: null });
+
+  test("search-progress returns 401", async ({ page }) => {
+    const park = await createPark({ name: "Salt Point" });
+    const facility = await createFacility({ name: "Woodside", parkId: park.id });
+    const response = await page.request.get(`/api/search-progress?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
+    expect(response.status()).toBe(401);
+  });
+
+  test("geocode returns 401 before calling the external geocoder", async ({ page }) => {
+    const response = await page.request.get("/api/geocode?q=Newport%20Beach");
+    expect(response.status()).toBe(401);
+    expect((await response.json()).authRequired).toBe(true);
+  });
+
+  test("search page still shows stored data, with a sign-in prompt instead of a refresh", async ({ page }) => {
+    const park = await createPark({ name: "Sugar Pine Point" });
+    const facility = await createFacility({
+      name: "General Creek",
+      parkId: park.id,
+      lastScannedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+
+    await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
+
+    await expect(page.getByText("to check these 1 campground against ReserveCalifornia", { exact: false })).toBeVisible();
+    await expect(page.getByText("Checking ReserveCalifornia", { exact: false })).toHaveCount(0);
+  });
+});
+
+test.describe("api auth — signed in", () => {
+  test.use({ user: { email: "member@example.com", firstName: "Mem", lastName: "Ber" } });
+
+  test("search-progress is reachable", async ({ page }) => {
+    const park = await createPark({ name: "Del Norte" });
+    const facility = await createFacility({ name: "Mill Creek", parkId: park.id, lastScannedAt: new Date() });
+    // Everything is fresh, so the stream opens, finds nothing to do, and closes.
+    const response = await page.request.get(`/api/search-progress?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
+    expect(response.status()).toBe(200);
   });
 });
