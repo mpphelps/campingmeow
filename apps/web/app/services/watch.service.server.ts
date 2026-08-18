@@ -1,4 +1,5 @@
 import { ForbiddenError, ValidationError } from "~/lib/errors";
+import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { watchRepository } from "../repositories/watch.repository.server";
@@ -64,6 +65,8 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
   const facilityIds = [...new Set(input.facilityIds)];
   if (facilityIds.length === 0) {
     fields.facilityIds = "Pick at least one campground.";
+  } else if (facilityIds.length > MAX_WATCH_FACILITIES) {
+    fields.facilityIds = `A watch can cover at most ${MAX_WATCH_FACILITIES} campgrounds (you picked ${facilityIds.length}). Create a second watch for the rest.`;
   } else {
     const facilities = await facilityRepository.listActiveByIds(facilityIds);
     if (facilities.length !== facilityIds.length) {

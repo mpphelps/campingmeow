@@ -10,6 +10,8 @@ export {
   getGrid,
   getAllPlaces,
   getAllFacilities,
+  getRateLimitState,
+  RateLimitedError,
 } from "./api.js";
 
 export {

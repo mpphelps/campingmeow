@@ -10,6 +10,7 @@ import { Input } from "@campingmeow/ui/components/input";
 import { Select } from "@campingmeow/ui/components/select";
 import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/home";
+import { MAX_SEARCH_FACILITIES, MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
 
@@ -186,12 +187,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     return filtered;
   }, [parks, query, origin, radius]);
 
+  /**
+   * Every selected campground costs ~10 seconds of ReserveCalifornia requests,
+   * so selection is capped rather than letting someone tick all 500 and queue
+   * over an hour of continuous scanning.
+   */
+  function capped(next: Set<string>, previous: Set<string>): Set<string> {
+    if (next.size <= MAX_WATCH_FACILITIES) return next;
+    toast({
+      title: `That's the limit — ${MAX_WATCH_FACILITIES} campgrounds`,
+      description: "We check each one live against ReserveCalifornia. Search or watch these, then come back for more.",
+      variant: "destructive",
+    });
+    return previous;
+  }
+
   function toggleFacility(facilityId: string, checked: boolean) {
     setSelected((prev) => {
       const next = new Set(prev);
       if (checked) next.add(facilityId);
       else next.delete(facilityId);
-      return next;
+      return capped(next, prev);
     });
   }
 
@@ -202,7 +218,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         if (checked) next.add(f.id);
         else next.delete(f.id);
       }
-      return next;
+      return capped(next, prev);
     });
   }
 
@@ -237,6 +253,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }
 
   const selectedIds = [...selected].join(",");
+  const tooManyToSearch = selected.size > MAX_SEARCH_FACILITIES;
 
   return (
     <div>
@@ -257,7 +274,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             className="max-w-xs"
           />
           <div className="ml-auto flex gap-2">
-            <Button variant="outline" disabled={selected.size === 0} onClick={() => navigate(`/search?facilities=${selectedIds}`)}>
+            <Button
+              variant="outline"
+              disabled={selected.size === 0 || tooManyToSearch}
+              onClick={() => navigate(`/search?facilities=${selectedIds}`)}
+            >
               Search availability
             </Button>
             <Button disabled={selected.size === 0} onClick={() => navigate(`/watches/new?facilities=${selectedIds}`)}>
@@ -265,6 +286,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </Button>
           </div>
         </div>
+
+        {selected.size > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {selected.size} of {MAX_WATCH_FACILITIES} campgrounds selected.{" "}
+            {tooManyToSearch
+              ? `Searching checks each one live, so it's limited to ${MAX_SEARCH_FACILITIES} — deselect a few, or watch these instead and we'll email you.`
+              : `You can search up to ${MAX_SEARCH_FACILITIES} at once, or watch all ${MAX_WATCH_FACILITIES}.`}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <geocoder.Form

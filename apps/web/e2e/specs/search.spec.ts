@@ -174,3 +174,37 @@ test.describe("geocode endpoint", () => {
     expect(response.status()).toBe(422);
   });
 });
+
+// Selecting every park would queue hundreds of campgrounds' worth of live ReserveCalifornia
+// requests, so both the service layer and the UI cap it. See app/lib/limits.ts.
+test.describe("search limits", () => {
+  test("refuses a search over the campground cap and offers a way out", async ({ page }) => {
+    const park = await createPark({ name: "Big Basin" });
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const facility = await createFacility({ name: `Camp ${i}`, parkId: park.id, lastScannedAt: new Date() });
+      ids.push(facility.id);
+    }
+
+    await page.goto(`/search?facilities=${ids.join(",")}&days=5&nights=1&bounds=anytime`);
+
+    await expect(page.getByText("pick at most 10 at a time (you picked 11)")).toBeVisible();
+    await expect(page.getByRole("link", { name: "watch them all instead" })).toBeVisible();
+    // No results block, and nothing was scanned.
+    await expect(page.getByText("matching check-in date", { exact: false })).toHaveCount(0);
+  });
+
+  test("allows a search exactly at the cap", async ({ page }) => {
+    const park = await createPark({ name: "Henry Coe" });
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const facility = await createFacility({ name: `Site ${i}`, parkId: park.id, lastScannedAt: new Date() });
+      ids.push(facility.id);
+    }
+
+    await page.goto(`/search?facilities=${ids.join(",")}&days=5&nights=1&bounds=anytime`);
+
+    await expect(page.getByText("matching check-in date", { exact: false })).toBeVisible();
+    await expect(page.getByText("pick at most 10", { exact: false })).toHaveCount(0);
+  });
+});

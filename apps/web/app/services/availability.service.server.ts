@@ -1,5 +1,15 @@
-import { addDays, dayOfWeek, eachDay, fetchFacilityAvailability, fmt, type ISODate } from "@campingmeow/scanner";
+import {
+  addDays,
+  dayOfWeek,
+  eachDay,
+  fetchFacilityAvailability,
+  fmt,
+  getRateLimitState,
+  RateLimitedError,
+  type ISODate,
+} from "@campingmeow/scanner";
 import { ValidationError } from "~/lib/errors";
+import { MAX_SEARCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
@@ -7,8 +17,20 @@ import { watchRepository } from "../repositories/watch.repository.server";
 import { authService, type AuthUser } from "./auth.service.server";
 import { ADMIN_PERMISSION } from "./admin.service.server";
 
-/** Politeness delay between ReserveCalifornia grid calls. */
-const REQUEST_DELAY_MS = 500;
+/**
+ * Politeness delay between ReserveCalifornia grid calls. Matches camply
+ * (juftin/camply), which has run against this API for years at
+ * `ratelimit.limits(calls=1, period=1)` — 1 request/second. That is hotter
+ * than the ~30-40/min soft limit reported elsewhere, but it is the rate a
+ * mature client demonstrably sustains.
+ *
+ * This is the one dial the whole scanning budget hangs off: raising it slows
+ * every sweep proportionally, lowering it risks an IP-level block that takes
+ * the whole app down, not just the scan. Note camply spreads its load over
+ * thousands of users' own IPs in short bursts, where we are one Pi running
+ * continuously — so treat 1s as a ceiling, not a target to beat.
+ */
+const REQUEST_DELAY_MS = 1000;
 /** How far ahead we scan; ReserveCalifornia books ~6 months out. */
 const HORIZON_DAYS = 180;
 /** Stored availability older than this is refreshed after a search answers. */
@@ -84,6 +106,8 @@ export interface SweepState {
   startedAt: string | null;
   finishedAt: string | null;
   currentFacility: string | null;
+  /** Set when a sweep stopped early because we got rate-limited. */
+  blockedUntil: string | null;
 }
 
 /**
@@ -100,6 +124,7 @@ let sweepState: SweepState = {
   startedAt: null,
   finishedAt: null,
   currentFacility: null,
+  blockedUntil: null,
 };
 
 // Domain service for campsite availability.
@@ -108,6 +133,7 @@ let sweepState: SweepState = {
 export const availabilityService = {
   searchOpenings,
   refreshSearch,
+  getRateLimitState,
   scanFacility,
   scanWatchedFacilities,
   startSweep,
@@ -142,6 +168,8 @@ function parseSearch(input: SearchOpeningsInput): SearchQuery {
 
   const facilityIds = [...new Set(input.facilityIds)];
   if (facilityIds.length === 0) fields.facilityIds = "Pick at least one campground.";
+  else if (facilityIds.length > MAX_SEARCH_FACILITIES)
+    fields.facilityIds = `Searching checks each campground live, so pick at most ${MAX_SEARCH_FACILITIES} at a time (you picked ${facilityIds.length}).`;
 
   const today = fmt(new Date());
   const windowStart = input.startDate && input.startDate > today ? input.startDate : today;
@@ -272,6 +300,7 @@ async function* refreshSearch(
   const total = pending.length;
   const failedIds = new Set<string>();
   let done = 0;
+  let succeeded = 0;
 
   const abandoned = () => {
     if (!options.signal?.aborted) return false;
@@ -279,30 +308,42 @@ async function* refreshSearch(
     return true;
   };
 
-  for (const facility of pending) {
+  for (const [index, facility] of pending.entries()) {
     if (abandoned()) return;
+
+    let blocked = false;
     try {
       await scanFacility(facility.id);
+      succeeded++;
     } catch (err) {
-      logger.warn({ action: "search.refresh_failed", facilityId: facility.id, err }, "refresh during search failed");
       failedIds.add(facility.id);
+      if (err instanceof RateLimitedError) {
+        // Every remaining campground would hit the same block, so stop asking
+        // and report them all as stale rather than leaving them "checking".
+        for (const rest of pending.slice(index + 1)) failedIds.add(rest.id);
+        blocked = true;
+        logger.warn({ action: "search.refresh_blocked", until: err.until }, "refresh stopped: rate limited");
+      } else {
+        logger.warn({ action: "search.refresh_failed", facilityId: facility.id, err }, "refresh during search failed");
+      }
     }
     done++;
-    // Re-check: a scan takes ~7s, plenty of time for the reader to go away.
+    // Re-check: a scan takes tens of seconds, plenty of time to lose the reader.
     if (abandoned()) return;
 
     // Re-read so both lastScannedAt and the new slots are reflected.
     facilities = await loadFacilities(query);
     yield {
       type: "progress",
-      done,
+      done: blocked ? total : done,
       total,
       facilityName: facility.name,
       results: await buildResults(query, facilities, failedIds),
     };
+    if (blocked) break;
   }
 
-  yield { type: "done", refreshed: done - failedIds.size, failed: failedIds.size };
+  yield { type: "done", refreshed: succeeded, failed: failedIds.size };
 }
 
 /** A stay matches when one site has every night free, starting on a wanted weekday. */
@@ -421,6 +462,7 @@ async function startSweep(user: AuthUser, scope: "watched" | "all"): Promise<Swe
     startedAt: new Date().toISOString(),
     finishedAt: null,
     currentFacility: null,
+    blockedUntil: null,
   };
   logger.info({ action: "sweep.start", scope, facilities: facilityIds.length, userId: user.id }, "sweep started");
 
@@ -434,6 +476,19 @@ async function runSweep(facilityIds: string[]): Promise<void> {
       const summary = await scanFacility(facilityId);
       sweepState = { ...sweepState, done: sweepState.done + 1, currentFacility: summary.facilityName };
     } catch (err) {
+      if (err instanceof RateLimitedError) {
+        // Grinding through the remaining campgrounds would just extend the
+        // penalty. Stop the sweep and show an admin when we can try again.
+        logger.error({ action: "sweep.rate_limited", until: err.until, done: sweepState.done }, "sweep stopped: rate limited");
+        sweepState = {
+          ...sweepState,
+          running: false,
+          currentFacility: null,
+          finishedAt: new Date().toISOString(),
+          blockedUntil: err.until.toISOString(),
+        };
+        return;
+      }
       logger.warn({ action: "sweep.facility_failed", facilityId, err }, "sweep facility failed");
       sweepState = { ...sweepState, done: sweepState.done + 1, failed: sweepState.failed + 1 };
     }

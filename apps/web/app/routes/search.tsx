@@ -75,6 +75,20 @@ export default function Search({ loaderData }: Route.ComponentProps) {
         set a watch to be emailed the moment one appears.
       </p>
 
+      {fields?.facilityIds && (
+        <div className="mt-4 max-w-2xl rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          {fields.facilityIds}{" "}
+          <Link to="/" className="underline underline-offset-2">
+            Change your selection
+          </Link>
+          , or{" "}
+          <Link to={watchHref} className="underline underline-offset-2">
+            watch them all instead
+          </Link>
+          .
+        </div>
+      )}
+
       <Form method="get" className="mt-8 max-w-2xl space-y-6">
         <input type="hidden" name="facilities" value={facilityIds} />
 

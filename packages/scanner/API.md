@@ -163,11 +163,53 @@ Key response fields:
   that date (usually 1, sometimes 2 on holiday weekends).
 
 ### Scanning a whole season
-- One grid call already returns ~20 days of slices, so to cover the full 6-month
-  window you page through it in chunks (this repo steps by 14 days) and merge the
-  slices, rather than making one call per night.
+- One grid call returns **exactly 21 days** of slices (`StartDate` .. `StartDate+20`)
+  for **all** sites in one facility. To cover the 6-month window you page and merge.
 - `MinDate`/`MaxDate` in any grid response tell you the currently bookable range —
   use them to clamp your scan instead of guessing the 6-month math.
+- Page by reading the last slice date in the response and starting the next call
+  the day after. Don't hardcode a step: a fixed 14-day step re-fetches a third of
+  every response, and would leave gaps if the 21-day cap ever changed.
+
+#### The window cannot be widened (measured 2026-08-18)
+
+| Attempt | Result |
+|---|---|
+| `Nights: 30` / `Nights: 180` | still 21 days |
+| `EndDate` field in the body | ignored, still 21 days |
+| `FacilityId: [447, 2157]` | HTTP 400 |
+| `FacilityIds: [447, 2157]` | silently ignored — returns only `FacilityId` |
+| `PlaceId` in place of `FacilityId` | empty response |
+| `GET search/details/{placeId}/...` | HTTP 500 |
+
+21 days × 1 facility is the hard ceiling on this endpoint. **9 calls** covers a
+180-day window. The only way to widen coverage per request is `search/place`
+(§3), which returns `Available: true/false` for *every* facility in a park in a
+single call — no per-site or per-date detail, but a cheap change detector.
+
+---
+
+## 4b. Rate limits — the constraint everything else bends around
+
+Reported thresholds (not officially published, treat as a working assumption):
+
+- **Safe zone:** ≤ 1 request every 2–3 seconds.
+- **Soft limit:** ~30–40 requests/minute trips a temporary block.
+- **Penalty:** HTTP 429 or 403, and the IP or session is blacklisted for
+  **15 minutes to several hours**.
+
+On a single-IP deployment that penalty takes the whole app down, not just the
+scan, so the scanner holds one request every 2.5s (~23/min) and this package
+trips a circuit breaker on the first 429/403 rather than retrying:
+
+- `RateLimitedError` is thrown, distinct from ordinary failures, so callers
+  abandon the whole batch instead of moving to the next item.
+- Every later call fails immediately without touching the network until the
+  block expires (`Retry-After` if given, floor of 15 minutes).
+- `getRateLimitState()` reports it for the admin panel.
+
+Never retry a 429 — it deepens the penalty. Only 5xx and connection errors are
+retried, with exponential backoff.
 
 ---
 
