@@ -122,9 +122,27 @@ curl -I https://campingmeow.com
 - **404** — hostname reached the tunnel but matched no ingress rule: wrong config file edited, or cloudflared not restarted. Test with `cloudflared tunnel ingress rule https://campingmeow.com --config /etc/cloudflared/config.yml`
 - **200** — after the first deploy, this is the steady state
 
+### Server-sent events through the tunnel
+
+`/api/search-progress` streams progress while a search re-scans stale campgrounds. It only
+works if nothing between the app and the browser buffers the response — a buffering proxy
+holds every event until the stream ends, so the page sits still for the whole refresh and
+then jumps to the final answer. It looks like "SSE is broken in prod" but nothing errors.
+
+The app sets `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, and
+`X-Accel-Buffering: no`, which cloudflared and Cloudflare both honour. If a reverse proxy is
+ever put in front (nginx), it also needs `proxy_buffering off;` on that location.
+
+Verify after a deploy — events should trickle in over ~7s each, not arrive all at once:
+
+```bash
+curl -N "https://campingmeow.com/api/search-progress?facilities=<id>&days=5&nights=2&bounds=anytime"
+```
+
 ### Troubleshooting
 
 - **Bookshelf broke after editing config** — YAML indent error. Run `cloudflared tunnel ingress validate --config /etc/cloudflared/config.yml`.
+- **Search progress bar never moves, then results appear at the end** — something is buffering the SSE stream; see above.
 - **Auth0 "Callback URL mismatch"** — the allowed list and the `AUTH0_CALLBACK_URL` secret must both be exactly `https://campingmeow.com/auth/callback` (not `www.`, not `http://`).
 - **Infinite redirect loop after login** — session cookie is `Secure`-only in prod but the request reached the app over plain HTTP. Access via the tunnel domain, not `http://<pi-ip>:3001`.
 

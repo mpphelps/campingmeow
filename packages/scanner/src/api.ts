@@ -20,10 +20,23 @@ const UA =
 let cachedBase: string | null = null;
 
 /**
+ * Hard off-switch for every call to ReserveCalifornia. The e2e suite sets it so
+ * that background work triggered by a test — an initial scan after a watch is
+ * created, a stale refresh during a search — can never reach the live API with
+ * seeded facility ids. Callers already treat a scan failure as non-fatal.
+ */
+function assertOnline(): void {
+  if (process.env.RC_API_OFFLINE === "1") {
+    throw new Error("ReserveCalifornia API is disabled (RC_API_OFFLINE=1)");
+  }
+}
+
+/**
  * Resolve the API base URL the way the website does: read it from
  * reservecalifornia.com/config.json at runtime, falling back to a known value.
  */
 export async function getBaseUrl(): Promise<string> {
+  assertOnline();
   if (cachedBase) return cachedBase;
   try {
     const res = await fetch("https://reservecalifornia.com/config.json", {

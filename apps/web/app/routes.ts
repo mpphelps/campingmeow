@@ -1,7 +1,15 @@
-import { type RouteConfig, route } from "@react-router/dev/routes";
+import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
 export default [
-  route("/", "routes/home.tsx"),
+  layout("routes/layout.tsx", [
+    index("routes/home.tsx"),
+    route("parks", "routes/parks.tsx"),
+    route("parks/:parkId", "routes/parks.$parkId.tsx"),
+    route("search", "routes/search.tsx"),
+    route("watches", "routes/watches.tsx"),
+    route("watches/new", "routes/watches.new.tsx"),
+    route("admin", "routes/admin.tsx"),
+  ]),
   route("health", "routes/health.tsx"),
   route("robots.txt", "routes/robots.ts"),
   route("sitemap.xml", "routes/sitemap.ts"),
@@ -10,4 +18,7 @@ export default [
   route("auth/logout", "routes/auth.logout.ts"),
   route("auth/test-login", "routes/auth.test-login.ts"),
   route("api/catalog-sync", "routes/api.catalog-sync.ts"),
+  route("api/geocode", "routes/api.geocode.ts"),
+  route("api/scan-watched", "routes/api.scan-watched.ts"),
+  route("api/search-progress", "routes/api.search-progress.ts"),
 ] satisfies RouteConfig;

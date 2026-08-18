@@ -1,8 +1,9 @@
 import { ForbiddenError } from "~/lib/errors";
 import { authService } from "../services/auth.service.server";
-import { catalogService } from "../services/catalog.service.server";
-import type { Route } from "./+types/api.catalog-sync";
+import { availabilityService } from "../services/availability.service.server";
+import type { Route } from "./+types/api.scan-watched";
 
+/** Starts a background sweep (?scope=watched|all) and reports its progress. */
 export async function action({ request }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
@@ -11,9 +12,10 @@ export async function action({ request }: Route.ActionArgs) {
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const scope = (await request.formData()).get("scope") === "all" ? "all" : "watched";
   try {
-    const result = await catalogService.sync(user);
-    return Response.json(result);
+    return Response.json(await availabilityService.startSweep(user, scope));
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return new Response("Forbidden", { status: 403 });

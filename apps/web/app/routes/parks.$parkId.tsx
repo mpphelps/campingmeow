@@ -1,0 +1,45 @@
+import { Link } from "react-router";
+
+import { Button } from "@campingmeow/ui/components/button";
+import type { Route } from "./+types/parks.$parkId";
+import { catalogService } from "~/services/catalog.service.server";
+
+export async function loader({ params }: Route.LoaderArgs) {
+  const park = await catalogService.getParkDetail(params.parkId);
+  if (!park) {
+    throw new Response("Not Found", { status: 404 });
+  }
+  return { park };
+}
+
+export default function ParkDetail({ loaderData }: Route.ComponentProps) {
+  const { park } = loaderData;
+
+  return (
+    <div>
+      <Link to="/parks" className="text-sm text-muted-foreground hover:text-foreground">
+        ← All parks
+      </Link>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">{park.name}</h1>
+      {park.city && <p className="mt-1 text-sm text-muted-foreground">{park.city}, CA</p>}
+
+      <h2 className="mt-8 text-sm font-medium">Campgrounds</h2>
+      {park.facilities.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">No bookable campgrounds in this park.</p>
+      ) : (
+        <ul className="mt-3 divide-y rounded-lg border">
+          {park.facilities.map((facility) => (
+            <li key={facility.id} className="flex items-center justify-between gap-3 p-3 text-sm">
+              {facility.name}
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/watches/new?facilityId=${facility.id}`}>Watch</Link>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";

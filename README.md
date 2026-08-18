@@ -108,8 +108,9 @@ Full setup, troubleshooting, and disaster-recovery runbooks live in **[`DEPLOYME
 ## Data model
 
 - **User** — id, email (unique), firstName, lastName, timestamps. Created on first Auth0 login.
+- **Park** / **Facility** — the ReserveCalifornia catalog, mirrored daily; RC ids kept as unique columns, disappeared records marked inactive.
 
-Campground watches + notification service come next (extra Docker containers for the scanner worker and notifier).
+Campground watches + notification service come next (extra Docker containers for the scanner worker and notifier). See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md).
 
 ## License
 

@@ -14,7 +14,9 @@ export const test = base.extend<AppOptions & AppFixtures>({
 
   cleanDb: [
     async ({}, use) => {
-      await prisma.$executeRawUnsafe('TRUNCATE "User" CASCADE');
+      await prisma.$executeRawUnsafe(
+        'TRUNCATE "User", "Park", "Facility", "Watch", "WatchFacility", "AvailabilitySlot" CASCADE',
+      );
       await use();
     },
     { auto: true },

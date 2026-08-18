@@ -14,6 +14,7 @@ model User {
   lastName  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  watches   Watch[]
 }
 
 // A "place" in ReserveCalifornia terms: a state park containing bookable facilities.
@@ -45,8 +46,61 @@ model Facility {
   active          Boolean  @default(true)
   parkId          String
   park            Park     @relation(fields: [parkId], references: [id])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  // Null = never scanned. Drives "we haven't checked this yet" vs "nothing open".
+  lastScannedAt   DateTime?
+  watches         WatchFacility[]
+  slots           AvailabilitySlot[]
 
   @@index([parkId])
+}
+
+// Current known availability: one row per campsite per night, upserted on
+// every scan. Past dates are kept for future trending.
+model AvailabilitySlot {
+  id         String   @id @default(cuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  // ReserveCalifornia unit (campsite) id and its display name.
+  unitId     Int
+  unitName   String
+  date       DateTime @db.Date
+  isFree     Boolean
+  updatedAt  DateTime @updatedAt
+
+  @@unique([facilityId, unitId, date])
+  @@index([facilityId, date, isFree])
+}
+
+// A user's subscription: "tell me when any of these campgrounds has an
+// opening matching this date pattern."
+model Watch {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id])
+  // Check-in days of week, 0=Sun .. 6=Sat. Non-empty; enforced in the service.
+  checkinDays Int[]
+  // Consecutive nights that must all be free (1-7; enforced in the service).
+  nights      Int
+  // Optional bounds on check-in date. Null = the full (rolling) booking window.
+  startDate   DateTime?       @db.Date
+  endDate     DateTime?       @db.Date
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  facilities  WatchFacility[]
+
+  @@index([userId])
+}
+
+// Join table: the campgrounds a watch covers (one pattern, many facilities).
+model WatchFacility {
+  watchId    String
+  watch      Watch    @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id])
+
+  @@id([watchId, facilityId])
+  @@index([facilityId])
 }
