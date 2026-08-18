@@ -10,7 +10,11 @@ export {
   getGrid,
   getAllPlaces,
   getAllFacilities,
+  getRateLimitState,
+  RateLimitedError,
 } from "./api.js";
+
+export { acquireSlot, getQueueDepth, ScanQueueFullError, REQUEST_INTERVAL_MS } from "./rate-limit.js";
 
 export {
   fetchFacilityAvailability,

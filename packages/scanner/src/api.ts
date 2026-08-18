@@ -1,6 +1,7 @@
 // Thin typed client for the ReserveCalifornia ("RDR") backend.
 // See API.md for endpoint documentation.
 
+import { acquireSlot, drainQueue } from "./rate-limit.js";
 import type {
   CatalogFacility,
   CatalogPlace,
@@ -18,6 +19,8 @@ const UA =
   "(KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 let cachedBase: string | null = null;
+/** Single-flight guard: see getBaseUrl. */
+let baseInFlight: Promise<string> | null = null;
 
 /**
  * Hard off-switch for every call to ReserveCalifornia. The e2e suite sets it so
@@ -38,6 +41,18 @@ function assertOnline(): void {
 export async function getBaseUrl(): Promise<string> {
   assertOnline();
   if (cachedBase) return cachedBase;
+  // Single-flight. On a cold start every queued scan calls this at once, and
+  // without the guard each one fires its own config.json request — a burst at
+  // reservecalifornia.com before we've made a single API call.
+  baseInFlight ??= resolveBaseUrl().finally(() => {
+    baseInFlight = null;
+  });
+  return baseInFlight;
+}
+
+async function resolveBaseUrl(): Promise<string> {
+  // Same host family as the API, so it comes out of the same budget.
+  await acquireSlot();
   try {
     const res = await fetch("https://reservecalifornia.com/config.json", {
       headers: { "User-Agent": UA },
@@ -58,16 +73,72 @@ export async function getBaseUrl(): Promise<string> {
   return cachedBase;
 }
 
+/**
+ * How long to stand down after the API rate-limits us, when it doesn't say.
+ * Observed penalties run from 15 minutes to several hours, so this is the
+ * floor, not a guess at the real one.
+ */
+const DEFAULT_BLOCK_MS = 15 * 60 * 1000;
+
+/** Wall-clock time we're allowed to call again; 0 means we're not blocked. */
+let blockedUntil = 0;
+
+/**
+ * Thrown when ReserveCalifornia has told us to back off. Distinct from an
+ * ordinary failure: callers should abandon whatever batch they're doing rather
+ * than move on to the next item, because every later call will fail too.
+ */
+export class RateLimitedError extends Error {
+  readonly until: Date;
+  constructor(until: Date) {
+    super(`ReserveCalifornia rate-limited us; standing down until ${until.toISOString()}`);
+    this.name = "RateLimitedError";
+    this.until = until;
+  }
+}
+
+/** Whether we're currently standing down, for the admin panel. */
+export function getRateLimitState(): { blocked: boolean; until: string | null } {
+  const blocked = Date.now() < blockedUntil;
+  return { blocked, until: blocked ? new Date(blockedUntil).toISOString() : null };
+}
+
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return seconds * 1000;
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? null : at - Date.now();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function rdr<T>(
   path: string,
   init?: { method?: "GET" | "POST"; body?: unknown },
   retries = 3
 ): Promise<T> {
+  if (Date.now() < blockedUntil) {
+    throw new RateLimitedError(new Date(blockedUntil));
+  }
+
   const base = await getBaseUrl();
   let lastErr: unknown;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Every request — first try or retry — waits its turn at the global gate,
+    // so concurrency can never raise the rate, only lengthen the queue.
+    await acquireSlot();
+    // The breaker may have tripped while we were queued behind someone else.
+    if (Date.now() < blockedUntil) {
+      throw new RateLimitedError(new Date(blockedUntil));
+    }
+
+    let res: Response;
     try {
-      const res = await fetch(base + path, {
+      res = await fetch(base + path, {
         method: init?.method ?? "GET",
         headers: {
           "User-Agent": UA,
@@ -76,21 +147,44 @@ async function rdr<T>(
         },
         body: init?.body ? JSON.stringify(init.body) : undefined,
       });
-      // The backend throws sporadic 5xx / 429s under load; retry those.
-      if (res.status >= 500 || res.status === 429) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      }
-      if (!res.ok) {
-        throw new Error(`RDR ${path} -> HTTP ${res.status} ${res.statusText}`);
-      }
-      return (await res.json()) as T;
     } catch (err) {
+      // Connection-level failure (DNS, reset, timeout) — worth another go.
       lastErr = err;
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
-      }
+      // Extra backoff on top of the gate: a struggling server needs more than
+      // the usual one-second gap.
+      if (attempt < retries) await sleep(2000 * 2 ** attempt);
+      continue;
     }
+
+    // Being told to go away. Retrying is exactly the wrong move — it deepens
+    // the penalty — so trip a breaker that stops every caller, not just this
+    // one, until the window passes.
+    if (res.status === 429 || res.status === 403) {
+      const wait = parseRetryAfter(res.headers.get("retry-after")) ?? DEFAULT_BLOCK_MS;
+      blockedUntil = Date.now() + Math.max(wait, DEFAULT_BLOCK_MS);
+      const blocked = new RateLimitedError(new Date(blockedUntil));
+      // Anyone still queued would be refused too — fail them now rather than
+      // trickling out doomed requests one per second.
+      drainQueue(blocked);
+      throw blocked;
+    }
+
+    // Sporadic 5xx under load; those really are transient.
+    if (res.status >= 500) {
+      lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
+      if (attempt < retries) await sleep(2000 * 2 ** attempt);
+      continue;
+    }
+
+    // Any other 4xx is our bug — a bad id or a malformed body. Retrying it
+    // just spends requests we can't afford.
+    if (!res.ok) {
+      throw new Error(`RDR ${path} -> HTTP ${res.status} ${res.statusText}`);
+    }
+
+    return (await res.json()) as T;
   }
+
   throw new Error(`RDR ${path} failed after ${retries + 1} tries: ${String(lastErr)}`);
 }
 

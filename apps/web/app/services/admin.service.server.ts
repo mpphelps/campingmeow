@@ -16,6 +16,10 @@ export interface AdminDashboard {
     watchedFacilityCount: number;
   };
   sweep: SweepState;
+  /** Set while ReserveCalifornia has us blocked; nothing will scan until it clears. */
+  rateLimit: { blocked: boolean; until: string | null };
+  /** ReserveCalifornia requests waiting at the global rate gate. */
+  queueDepth: number;
   users: {
     id: string;
     email: string;
@@ -52,6 +56,8 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       watchedFacilityCount: watchedFacilityIds.length,
     },
     sweep: availabilityService.getSweepState(),
+    rateLimit: availabilityService.getRateLimitState(),
+    queueDepth: availabilityService.getQueueDepth(),
     users: users.map((u) => ({
       id: u.id,
       email: u.email,

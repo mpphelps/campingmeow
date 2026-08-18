@@ -15,15 +15,23 @@ export const watchOrchestratorService = {
  */
 async function createWatchAndScan(userId: string, input: CreateWatchInput): Promise<WatchListItem> {
   const watch = await watchService.createWatch(userId, input);
-
-  for (const facility of watch.facilities) {
-    void availabilityService.scanFacility(facility.facilityId).catch((err) => {
-      logger.warn(
-        { action: "watch.initial_scan_failed", facilityId: facility.facilityId, err },
-        "initial scan after watch creation failed",
-      );
-    });
-  }
-
+  void scanInBackground(watch.facilities.map((f) => f.facilityId));
   return watch;
+}
+
+/**
+ * Scan the new watch's campgrounds one after another. The global rate gate
+ * already stops parallel scans from raising the request rate, but firing all
+ * 20 at once would interleave them in the queue — every campground would
+ * finish at the end instead of the first finishing in ten seconds. Sequential
+ * means results land steadily.
+ */
+async function scanInBackground(facilityIds: string[]): Promise<void> {
+  for (const facilityId of facilityIds) {
+    try {
+      await availabilityService.scanFacility(facilityId);
+    } catch (err) {
+      logger.warn({ action: "watch.initial_scan_failed", facilityId, err }, "initial scan after watch creation failed");
+    }
+  }
 }

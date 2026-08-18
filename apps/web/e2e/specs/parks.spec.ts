@@ -245,3 +245,49 @@ test.describe("park detail", () => {
     await expect(page.getByRole("heading", { name: "Not found" })).toBeVisible();
   });
 });
+
+// Every selected campground costs ~10s of live ReserveCalifornia requests, so the home
+// page caps selection. See app/lib/limits.ts for where the numbers come from.
+test.describe("home page selection limits", () => {
+  test("disables Search availability past 10 and refuses to select past 20", async ({ page }) => {
+    const park = await createPark({ name: "Big Basin Redwoods" });
+    for (let i = 0; i < 21; i++) {
+      // Zero-padded so "Camp 01" never also matches "Camp 010".
+      await createFacility({ name: `Camp ${String(i).padStart(2, "0")}`, parkId: park.id });
+    }
+
+    await page.goto("/");
+    await page.getByLabel(`Select ${park.name}`).click();
+
+    // Ticking the whole park (21) would blow the cap, so nothing is selected.
+    // Radix renders each toast twice — once visibly, once in an aria-live region.
+    await expect(page.getByText("That's the limit — 20 campgrounds").first()).toBeVisible();
+    await expect(page.getByText("campgrounds selected", { exact: false })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create watch" })).toBeDisabled();
+
+    await page.getByRole("button", { name: `${park.name}`, exact: false }).first().click();
+
+    for (let i = 0; i < 10; i++) {
+      await page.getByLabel(`Select Camp ${String(i).padStart(2, "0")}`).click();
+    }
+    await expect(page.getByText("10 of 20 campgrounds selected")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Search availability" })).toBeEnabled();
+
+    // The 11th is still watchable, but no longer searchable.
+    await page.getByLabel("Select Camp 10").click();
+    await expect(page.getByText("11 of 20 campgrounds selected")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Search availability" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Create watch (11)" })).toBeEnabled();
+
+    for (let i = 11; i < 20; i++) {
+      await page.getByLabel(`Select Camp ${String(i).padStart(2, "0")}`).click();
+    }
+    await expect(page.getByText("20 of 20 campgrounds selected")).toBeVisible();
+
+    // The 21st is refused outright, with a toast explaining why.
+    await page.getByLabel("Select Camp 20").click();
+    await expect(page.getByText("That's the limit — 20 campgrounds").first()).toBeVisible();
+    await expect(page.getByText("20 of 20 campgrounds selected")).toBeVisible();
+    await expect(page.getByLabel("Select Camp 20")).toHaveAttribute("aria-checked", "false");
+  });
+});

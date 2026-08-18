@@ -123,3 +123,24 @@ test.describe("scan-watched endpoint — non-admin", () => {
     expect(response.status()).toBe(403);
   });
 });
+
+// A full sweep is ~1.5 hours of continuous requests, so it must be stoppable.
+test.describe("sweep cancellation", () => {
+  test.use({ user: { email: "sweepadmin@example.com", firstName: "Sweep", lastName: "Admin", permissions: ["admin:site"] } });
+
+  test("cancelling an idle sweep is a no-op that still reports state", async ({ page }) => {
+    const response = await page.request.post("/api/scan-watched", { form: { intent: "cancel" } });
+    expect(response.status()).toBe(200);
+    const state = await response.json();
+    expect(state.running).toBe(false);
+  });
+});
+
+test.describe("sweep cancellation — non-admin", () => {
+  test.use({ user: { email: "notadmin@example.com", firstName: "Not", lastName: "Admin" } });
+
+  test("returns 403", async ({ page }) => {
+    const response = await page.request.post("/api/scan-watched", { form: { intent: "cancel" } });
+    expect(response.status()).toBe(403);
+  });
+});

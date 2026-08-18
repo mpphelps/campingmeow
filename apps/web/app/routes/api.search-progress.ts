@@ -1,6 +1,7 @@
 import { ValidationError } from "~/lib/errors";
 import { logger } from "~/lib/logger.server";
 import { parseSearchParams } from "~/lib/search-params";
+import { authService } from "~/services/auth.service.server";
 import { availabilityService } from "~/services/availability.service.server";
 import type { Route } from "./+types/api.search-progress";
 
@@ -11,8 +12,17 @@ import type { Route } from "./+types/api.search-progress";
  * whatever was stale and pushes a replacement snapshot after each campground,
  * so the page fills in live instead of blocking on a ~7s-per-campground
  * refresh. One `data:` frame per event, each a `SearchProgressEvent`.
+ *
+ * Signed-in only: each connection spends real ReserveCalifornia requests, and
+ * the per-search campground cap bounds one request, not how many a stranger
+ * can open at once.
  */
 export async function loader({ request }: Route.LoaderArgs) {
+  const user = await authService.getAuthenticatedUser(request);
+  if (!user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { facilityIds, criteria } = parseSearchParams(request);
   if (facilityIds.length === 0) {
     return new Response("Not Found", { status: 404 });

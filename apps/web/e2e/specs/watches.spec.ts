@@ -151,3 +151,65 @@ test.describe("watches — cross-user authorization", () => {
     expect(stillExists).not.toBeNull();
   });
 });
+
+// A watch is swept hourly forever, so it carries a tighter cap than a one-off search.
+test.describe("watch limits", () => {
+  test.use({ user: { email: "capped@example.com", firstName: "Cap", lastName: "Ped" } });
+
+  test("rejects a watch covering more campgrounds than the cap", async ({ page }) => {
+    const park = await createPark({ name: "Anza-Borrego" });
+    const ids: string[] = [];
+    for (let i = 0; i < 21; i++) {
+      const facility = await createFacility({ name: `Camp ${i}`, parkId: park.id });
+      ids.push(facility.id);
+    }
+
+    // `facilityIds` repeats once per campground, which Playwright's `form` option
+    // (a plain object) can't express — build the urlencoded body by hand.
+    const body = new URLSearchParams();
+    for (const id of ids) body.append("facilityIds", id);
+    body.append("checkinDays", "5");
+    body.append("nights", "1");
+    body.append("bounds", "anytime");
+
+    const response = await page.request.post("/watches/new", {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: body.toString(),
+    });
+
+    expect(response.status()).toBe(200);
+    expect(await response.text()).toContain("at most 20 campgrounds");
+    expect(await prisma.watch.count()).toBe(0);
+  });
+});
+
+// One active watch per user while scanning is a single in-process loop.
+test.describe("one watch per user", () => {
+  test.use({ user: { email: "onewatch@example.com", firstName: "One", lastName: "Watch" } });
+
+  test("refuses a second watch and allows one again after deleting", async ({ page }) => {
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: "onewatch@example.com" } });
+    const park = await createPark({ name: "Mount Diablo" });
+    const facility = await createFacility({ name: "Live Oak", parkId: park.id });
+    const watch = await createWatch({ userId: user.id, facilityIds: facility.id, active: true });
+
+    const submit = () => {
+      const body = new URLSearchParams();
+      body.append("facilityIds", facility.id);
+      body.append("checkinDays", "5");
+      body.append("nights", "1");
+      body.append("bounds", "anytime");
+      return page.request.post("/watches/new", {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        data: body.toString(),
+      });
+    };
+
+    expect(await (await submit()).text()).toContain("You already have a watch");
+    expect(await prisma.watch.count()).toBe(1);
+
+    await prisma.watch.delete({ where: { id: watch.id } });
+    await submit();
+    expect(await prisma.watch.count()).toBe(1);
+  });
+});

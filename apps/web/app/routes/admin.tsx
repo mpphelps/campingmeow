@@ -46,13 +46,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Campgrounds", value: dashboard.stats.facilityCount },
     { label: "Active watches", value: dashboard.stats.watchCount },
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
+    { label: "Requests queued", value: dashboard.queueDepth },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-6">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -90,9 +91,17 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-sm text-muted-foreground">
-              Scan campgrounds and store what&apos;s open. Roughly 7 seconds each, so a full sweep of every campground takes about
-              an hour. It runs in the background — you can leave this page.
+              Scan campgrounds and store what&apos;s open. We hold to one request every 2.5s to stay under ReserveCalifornia&apos;s
+              rate limit, so each campground takes roughly 30 seconds and a full sweep runs for hours. It runs in the background —
+              you can leave this page.
             </p>
+
+            {dashboard.rateLimit.blocked && (
+              <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                ReserveCalifornia has rate-limited us. Scanning is paused until{" "}
+                {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <sweep.Form method="post" action="/api/scan-watched">
                 <input type="hidden" name="scope" value="watched" />
@@ -116,15 +125,28 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                     style={{ width: `${sweepState.total ? Math.round((sweepState.done / sweepState.total) * 100) : 0}%` }}
                   />
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {sweepState.scope === "all" ? "Full sweep" : "Watched sweep"}: {sweepState.done} of {sweepState.total}
-                  {sweepState.failed > 0 ? ` · ${sweepState.failed} failed` : ""}
-                  {sweepState.currentFacility ? ` · last: ${sweepState.currentFacility}` : ""}
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    {sweepState.scope === "all" ? "Full sweep" : "Watched sweep"}: {sweepState.done} of {sweepState.total}
+                    {sweepState.failed > 0 ? ` · ${sweepState.failed} failed` : ""}
+                    {sweepState.currentFacility ? ` · last: ${sweepState.currentFacility}` : ""}
+                  </p>
+                  <sweep.Form method="post" action="/api/scan-watched">
+                    <input type="hidden" name="intent" value="cancel" />
+                    <Button type="submit" variant="outline" size="sm">
+                      Stop sweep
+                    </Button>
+                  </sweep.Form>
+                </div>
               </div>
             ) : sweepState.finishedAt ? (
               <p className="mt-3 text-sm text-muted-foreground">
-                Last sweep finished {new Date(sweepState.finishedAt).toLocaleTimeString()}: {sweepState.done} campground
+                {sweepState.cancelled
+                  ? "Last sweep stopped by an admin"
+                  : sweepState.blockedUntil
+                    ? "Last sweep stopped early (rate limited)"
+                    : "Last sweep finished"}{" "}
+                {new Date(sweepState.finishedAt).toLocaleTimeString()}: {sweepState.done} campground
                 {sweepState.done === 1 ? "" : "s"}
                 {sweepState.failed > 0 ? `, ${sweepState.failed} failed` : ""}.
               </p>

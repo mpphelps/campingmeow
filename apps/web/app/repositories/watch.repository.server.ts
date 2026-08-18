@@ -35,6 +35,10 @@ export const watchRepository = {
     return prisma.watch.delete({ where: { id } });
   },
 
+  async countActiveByUserId(userId: string) {
+    return prisma.watch.count({ where: { userId, active: true } });
+  },
+
   async countActive() {
     return prisma.watch.count({ where: { active: true } });
   },

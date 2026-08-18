@@ -41,29 +41,61 @@ export function mergeGrid(
   }
 }
 
+/** Latest date any slice in this response covers, so we can page past it. */
+function lastCoveredDate(grid: GridResponse): ISODate | null {
+  let last: ISODate | null = null;
+  for (const unit of Object.values(grid.Facility?.Units ?? {})) {
+    for (const slice of Object.values(unit.Slices ?? {})) {
+      if (!last || slice.Date > last) last = slice.Date;
+    }
+  }
+  return last;
+}
+
+/** Only used when a response carries no slices at all and we must still advance. */
+const FALLBACK_STEP_DAYS = 14;
+
 /**
- * Pull the full grid for a facility across [startDate, endDate] by paging in
- * ~2-week chunks (each grid call returns ~3 weeks of slices; we step 14 days so
- * chunks overlap and nothing is missed).
+ * Pull the full grid for a facility across [startDate, endDate].
+ *
+ * The API caps each response at ~21 days regardless of what you ask for
+ * (`Nights` and `EndDate` don't widen it, and it's one facility per call), so
+ * the only way to cover a season is to page. We advance to the day after
+ * whatever the response actually covered rather than assuming a fixed step: a
+ * hardcoded 14-day step re-fetched a week of slices on every call, and would
+ * silently leave gaps if the cap ever changed.
+ *
+ * Pacing is not this function's job: every call inside goes through the global
+ * rate gate (see rate-limit.ts), so it runs as fast as the process budget
+ * allows and no faster.
  */
 export async function fetchFacilityAvailability(
   facilityId: number,
   startDate: ISODate,
-  endDate: ISODate,
-  delayMs: number
+  endDate: ISODate
 ): Promise<FacilityAvailability> {
   const sites = new Map<number, SiteAvailability>();
   let facilityName = `Facility ${facilityId}`;
   let minDate: ISODate | null = null;
   let maxDate: ISODate | null = null;
 
-  for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 14)) {
+  let cursor = startDate;
+  while (cursor <= endDate) {
     const grid = await getGrid(facilityId, cursor, 1);
     if (grid.Facility?.Name) facilityName = grid.Facility.Name;
     if (grid.MinDate) minDate = grid.MinDate;
     if (grid.MaxDate) maxDate = grid.MaxDate;
     mergeGrid(grid, sites);
-    if (cursor <= endDate) await sleep(delayMs);
+
+    const covered = lastCoveredDate(grid);
+    let next = covered ? addDays(covered, 1) : addDays(cursor, FALLBACK_STEP_DAYS);
+    // Never allow a stalled cursor to spin us into an infinite request loop.
+    if (next <= cursor) next = addDays(cursor, FALLBACK_STEP_DAYS);
+
+    // Nothing past the facility's bookable window is worth a request.
+    if (maxDate && next > maxDate) break;
+
+    cursor = next;
   }
 
   return {
@@ -72,8 +104,4 @@ export async function fetchFacilityAvailability(
     maxDate,
     sites: [...sites.values()],
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

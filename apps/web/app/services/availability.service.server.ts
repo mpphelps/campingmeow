@@ -1,5 +1,16 @@
-import { addDays, dayOfWeek, eachDay, fetchFacilityAvailability, fmt, type ISODate } from "@campingmeow/scanner";
+import {
+  addDays,
+  dayOfWeek,
+  eachDay,
+  fetchFacilityAvailability,
+  fmt,
+  getQueueDepth,
+  getRateLimitState,
+  RateLimitedError,
+  type ISODate,
+} from "@campingmeow/scanner";
 import { ValidationError } from "~/lib/errors";
+import { MAX_SEARCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
@@ -7,8 +18,9 @@ import { watchRepository } from "../repositories/watch.repository.server";
 import { authService, type AuthUser } from "./auth.service.server";
 import { ADMIN_PERMISSION } from "./admin.service.server";
 
-/** Politeness delay between ReserveCalifornia grid calls. */
-const REQUEST_DELAY_MS = 500;
+// Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
+// packages/scanner/src/rate-limit.ts), not here — otherwise concurrent callers
+// each pace themselves and the real rate is however many are running at once.
 /** How far ahead we scan; ReserveCalifornia books ~6 months out. */
 const HORIZON_DAYS = 180;
 /** Stored availability older than this is refreshed after a search answers. */
@@ -84,6 +96,10 @@ export interface SweepState {
   startedAt: string | null;
   finishedAt: string | null;
   currentFacility: string | null;
+  /** Set when a sweep stopped early because we got rate-limited. */
+  blockedUntil: string | null;
+  /** True when an admin stopped the last sweep by hand. */
+  cancelled: boolean;
 }
 
 /**
@@ -100,7 +116,16 @@ let sweepState: SweepState = {
   startedAt: null,
   finishedAt: null,
   currentFacility: null,
+  blockedUntil: null,
+  cancelled: false,
 };
+
+/**
+ * Raised between campgrounds to stop a running sweep. A full sweep is ~1.5
+ * hours of continuous requests, so an admin who starts one by mistake needs a
+ * way out that isn't restarting the server.
+ */
+let cancelRequested = false;
 
 // Domain service for campsite availability.
 //   Write path: scan ReserveCalifornia and store what we saw.
@@ -108,9 +133,12 @@ let sweepState: SweepState = {
 export const availabilityService = {
   searchOpenings,
   refreshSearch,
+  getRateLimitState,
+  getQueueDepth,
   scanFacility,
   scanWatchedFacilities,
   startSweep,
+  cancelSweep,
   getSweepState,
 };
 
@@ -142,6 +170,8 @@ function parseSearch(input: SearchOpeningsInput): SearchQuery {
 
   const facilityIds = [...new Set(input.facilityIds)];
   if (facilityIds.length === 0) fields.facilityIds = "Pick at least one campground.";
+  else if (facilityIds.length > MAX_SEARCH_FACILITIES)
+    fields.facilityIds = `Searching checks each campground live, so pick at most ${MAX_SEARCH_FACILITIES} at a time (you picked ${facilityIds.length}).`;
 
   const today = fmt(new Date());
   const windowStart = input.startDate && input.startDate > today ? input.startDate : today;
@@ -272,6 +302,7 @@ async function* refreshSearch(
   const total = pending.length;
   const failedIds = new Set<string>();
   let done = 0;
+  let succeeded = 0;
 
   const abandoned = () => {
     if (!options.signal?.aborted) return false;
@@ -279,30 +310,42 @@ async function* refreshSearch(
     return true;
   };
 
-  for (const facility of pending) {
+  for (const [index, facility] of pending.entries()) {
     if (abandoned()) return;
+
+    let blocked = false;
     try {
       await scanFacility(facility.id);
+      succeeded++;
     } catch (err) {
-      logger.warn({ action: "search.refresh_failed", facilityId: facility.id, err }, "refresh during search failed");
       failedIds.add(facility.id);
+      if (err instanceof RateLimitedError) {
+        // Every remaining campground would hit the same block, so stop asking
+        // and report them all as stale rather than leaving them "checking".
+        for (const rest of pending.slice(index + 1)) failedIds.add(rest.id);
+        blocked = true;
+        logger.warn({ action: "search.refresh_blocked", until: err.until }, "refresh stopped: rate limited");
+      } else {
+        logger.warn({ action: "search.refresh_failed", facilityId: facility.id, err }, "refresh during search failed");
+      }
     }
     done++;
-    // Re-check: a scan takes ~7s, plenty of time for the reader to go away.
+    // Re-check: a scan takes tens of seconds, plenty of time to lose the reader.
     if (abandoned()) return;
 
     // Re-read so both lastScannedAt and the new slots are reflected.
     facilities = await loadFacilities(query);
     yield {
       type: "progress",
-      done,
+      done: blocked ? total : done,
       total,
       facilityName: facility.name,
       results: await buildResults(query, facilities, failedIds),
     };
+    if (blocked) break;
   }
 
-  yield { type: "done", refreshed: done - failedIds.size, failed: failedIds.size };
+  yield { type: "done", refreshed: succeeded, failed: failedIds.size };
 }
 
 /** A stay matches when one site has every night free, starting on a wanted weekday. */
@@ -338,11 +381,30 @@ function allNightsFree(freeNights: Set<ISODate>, checkin: ISODate, nights: numbe
 // --------------------------------------------------------------- write path
 
 /**
+ * Scans currently running, keyed by facility id. Two people searching the same
+ * campground — or a search overlapping a sweep — would otherwise both scan it:
+ * duplicate requests out of a budget we can't afford, and two `replaceWindow`
+ * transactions racing over the same rows. The second caller waits on the first.
+ */
+const inFlightScans = new Map<string, Promise<ScanSummary>>();
+
+/**
  * Scan one campground's full booking window and store the result. This is the
  * only path that talks to ReserveCalifornia; the Phase 3 worker will call it
  * on a loop.
  */
-async function scanFacility(facilityId: string): Promise<ScanSummary> {
+function scanFacility(facilityId: string): Promise<ScanSummary> {
+  const existing = inFlightScans.get(facilityId);
+  if (existing) {
+    logger.debug({ action: "scan.facility.joined", facilityId }, "joined an in-flight scan");
+    return existing;
+  }
+  const scan = runScan(facilityId).finally(() => inFlightScans.delete(facilityId));
+  inFlightScans.set(facilityId, scan);
+  return scan;
+}
+
+async function runScan(facilityId: string): Promise<ScanSummary> {
   const facility = await facilityRepository.findById(facilityId);
   if (!facility) throw new ValidationError({ facilityId: "Unknown campground." });
 
@@ -350,7 +412,7 @@ async function scanFacility(facilityId: string): Promise<ScanSummary> {
   const end = addDays(start, HORIZON_DAYS);
   logger.info({ action: "scan.facility.start", facilityId, rcFacilityId: facility.rcFacilityId }, "scanning facility");
 
-  const availability = await fetchFacilityAvailability(facility.rcFacilityId, start, end, REQUEST_DELAY_MS);
+  const availability = await fetchFacilityAvailability(facility.rcFacilityId, start, end);
 
   // The grid only reports free nights per site; every date in the window that
   // a site is not free is stored as taken, so searches can tell the
@@ -421,19 +483,58 @@ async function startSweep(user: AuthUser, scope: "watched" | "all"): Promise<Swe
     startedAt: new Date().toISOString(),
     finishedAt: null,
     currentFacility: null,
+    blockedUntil: null,
+    cancelled: false,
   };
+  cancelRequested = false;
   logger.info({ action: "sweep.start", scope, facilities: facilityIds.length, userId: user.id }, "sweep started");
 
   void runSweep(facilityIds);
   return sweepState;
 }
 
+/** Ask a running sweep to stop after the campground in flight. Admin-only. */
+async function cancelSweep(user: AuthUser): Promise<SweepState> {
+  authService.requirePermission(user, ADMIN_PERMISSION);
+  if (!sweepState.running) return sweepState;
+  cancelRequested = true;
+  logger.info({ action: "sweep.cancel_requested", userId: user.id, done: sweepState.done }, "sweep cancellation requested");
+  return sweepState;
+}
+
 async function runSweep(facilityIds: string[]): Promise<void> {
   for (const facilityId of facilityIds) {
+    // Checked between campgrounds: the scan in flight still finishes, so we
+    // never leave a half-written window behind.
+    if (cancelRequested) {
+      logger.info({ action: "sweep.cancelled", done: sweepState.done, total: sweepState.total }, "sweep cancelled");
+      sweepState = {
+        ...sweepState,
+        running: false,
+        currentFacility: null,
+        finishedAt: new Date().toISOString(),
+        cancelled: true,
+      };
+      cancelRequested = false;
+      return;
+    }
     try {
       const summary = await scanFacility(facilityId);
       sweepState = { ...sweepState, done: sweepState.done + 1, currentFacility: summary.facilityName };
     } catch (err) {
+      if (err instanceof RateLimitedError) {
+        // Grinding through the remaining campgrounds would just extend the
+        // penalty. Stop the sweep and show an admin when we can try again.
+        logger.error({ action: "sweep.rate_limited", until: err.until, done: sweepState.done }, "sweep stopped: rate limited");
+        sweepState = {
+          ...sweepState,
+          running: false,
+          currentFacility: null,
+          finishedAt: new Date().toISOString(),
+          blockedUntil: err.until.toISOString(),
+        };
+        return;
+      }
       logger.warn({ action: "sweep.facility_failed", facilityId, err }, "sweep facility failed");
       sweepState = { ...sweepState, done: sweepState.done + 1, failed: sweepState.failed + 1 };
     }

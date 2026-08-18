@@ -9,6 +9,7 @@ import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/search";
 import { ValidationError } from "~/lib/errors";
 import { parseSearchParams } from "~/lib/search-params";
+import { authService } from "~/services/auth.service.server";
 import { availabilityService, type SearchProgressEvent, type SearchResults } from "~/services/availability.service.server";
 import { catalogService } from "~/services/catalog.service.server";
 
@@ -29,9 +30,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   const facilities = await catalogService.listFacilityPicker({ facilityIds });
   if (facilities.length === 0) throw new Response("Not Found", { status: 404 });
 
+  // Browsing stored availability is open to anyone; spending ReserveCalifornia
+  // requests to refresh it is not, so only signed-in users get the live stream.
+  const canRefresh = Boolean(await authService.getAuthenticatedUser(request));
+
   // No search run yet — just show the form.
   if (!hasQuery) {
-    return { facilities, results: null, criteria, fields: undefined };
+    return { facilities, results: null, criteria, fields: undefined, canRefresh };
   }
 
   try {
@@ -44,24 +49,24 @@ export async function loader({ request }: Route.LoaderArgs) {
       startDate: criteria.startDate,
       endDate: criteria.endDate,
     });
-    return { facilities, results, criteria, fields: undefined };
+    return { facilities, results, criteria, fields: undefined, canRefresh };
   } catch (err) {
     if (err instanceof ValidationError) {
-      return { facilities, results: null, criteria, fields: err.fields };
+      return { facilities, results: null, criteria, fields: err.fields, canRefresh };
     }
     throw err;
   }
 }
 
 export default function Search({ loaderData }: Route.ComponentProps) {
-  const { facilities, results, criteria, fields } = loaderData;
+  const { facilities, results, criteria, fields, canRefresh } = loaderData;
   const navigation = useNavigation();
   const searching = navigation.state === "loading";
   const [bounds, setBounds] = useState<"anytime" | "range">(criteria.bounds);
   const facilityIds = facilities.map((f) => f.id).join(",");
   const watchHref = `/watches/new?facilities=${facilityIds}`;
 
-  const { live, progress } = useLiveRefresh(results);
+  const { live, progress } = useLiveRefresh(results, canRefresh);
 
   return (
     <div>
@@ -74,6 +79,20 @@ export default function Search({ loaderData }: Route.ComponentProps) {
         check ReserveCalifornia for anything older than five minutes and update the results as they come in. Openings move fast —
         set a watch to be emailed the moment one appears.
       </p>
+
+      {fields?.facilityIds && (
+        <div className="mt-4 max-w-2xl rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          {fields.facilityIds}{" "}
+          <Link to="/" className="underline underline-offset-2">
+            Change your selection
+          </Link>
+          , or{" "}
+          <Link to={watchHref} className="underline underline-offset-2">
+            watch them all instead
+          </Link>
+          .
+        </div>
+      )}
 
       <Form method="get" className="mt-8 max-w-2xl space-y-6">
         <input type="hidden" name="facilities" value={facilityIds} />
@@ -177,6 +196,13 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             </div>
           )}
 
+          {!canRefresh && live.staleCount > 0 && (
+            <div className="mt-3 rounded-lg border p-3 text-sm">
+              Showing what we last stored. <a href="/auth/login" className="underline underline-offset-2">Sign in</a> to check
+              these {live.staleCount} campground{live.staleCount === 1 ? "" : "s"} against ReserveCalifornia right now.
+            </div>
+          )}
+
           {live.stale.length > 0 && (
             <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
               We couldn&apos;t reach ReserveCalifornia for {live.stale.join(", ")}, so{" "}
@@ -197,7 +223,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                 <h2 className="text-sm font-medium">
                   {facility.parkName} · {facility.facilityName}
                   <span className="ml-2 font-normal text-muted-foreground">
-                    {facility.isStale
+                    {facility.isStale && canRefresh
                       ? "checking now…"
                       : facility.lastScannedAt
                         ? `checked ${timeAgo(facility.lastScannedAt)}`
@@ -206,7 +232,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                 </h2>
                 {facility.openings.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {facility.isStale
+                    {facility.isStale && canRefresh
                       ? "Checking ReserveCalifornia…"
                       : facility.lastScannedAt
                         ? "Nothing open for this pattern right now."
@@ -261,7 +287,7 @@ interface RefreshProgress {
  * render first; each SSE frame carries a complete replacement snapshot, so the
  * page swaps state in rather than merging anything itself.
  */
-function useLiveRefresh(initial: SearchResults | null) {
+function useLiveRefresh(initial: SearchResults | null, canRefresh: boolean) {
   const location = useLocation();
   const [live, setLive] = useState(initial);
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
@@ -269,7 +295,7 @@ function useLiveRefresh(initial: SearchResults | null) {
   useEffect(() => {
     setLive(initial);
 
-    if (!initial || initial.staleCount === 0) {
+    if (!canRefresh || !initial || initial.staleCount === 0) {
       setProgress(null);
       return;
     }
@@ -297,7 +323,7 @@ function useLiveRefresh(initial: SearchResults | null) {
     };
 
     return () => source.close();
-  }, [initial, location.search]);
+  }, [initial, location.search, canRefresh]);
 
   return { live, progress };
 }
