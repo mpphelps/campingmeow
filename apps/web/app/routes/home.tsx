@@ -10,7 +10,7 @@ import { Input } from "@campingmeow/ui/components/input";
 import { Select } from "@campingmeow/ui/components/select";
 import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/home";
-import { MAX_SEARCH_FACILITIES, MAX_WATCH_FACILITIES } from "~/lib/limits";
+import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
 
@@ -259,7 +259,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }
 
   const selectedIds = [...selected].join(",");
-  const tooManyToSearch = selected.size > MAX_SEARCH_FACILITIES;
 
   return (
     <div>
@@ -280,11 +279,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             className="max-w-xs"
           />
           <div className="ml-auto flex gap-2">
-            <Button
-              variant="outline"
-              disabled={selected.size === 0 || tooManyToSearch}
-              onClick={() => navigate(`/search?facilities=${selectedIds}`)}
-            >
+            <Button variant="outline" disabled={selected.size === 0} onClick={() => navigate(`/search?facilities=${selectedIds}`)}>
               Search availability
             </Button>
             <Button disabled={selected.size === 0} onClick={() => navigate(`/watches/new?facilities=${selectedIds}`)}>
@@ -294,12 +289,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </div>
 
         {selected.size > 0 && (
-          <p className="text-sm text-muted-foreground">
-            {selected.size} of {MAX_WATCH_FACILITIES} campgrounds selected.{" "}
-            {tooManyToSearch
-              ? `Searching checks each one live, so it's limited to ${MAX_SEARCH_FACILITIES} — deselect a few, or watch these instead and we'll email you.`
-              : `You can search up to ${MAX_SEARCH_FACILITIES} at once, or watch all ${MAX_WATCH_FACILITIES}.`}
-          </p>
+          <p className="text-sm text-muted-foreground">{selected.size} of {MAX_WATCH_FACILITIES} campgrounds selected.</p>
         )}
 
         <div className="flex flex-wrap items-center gap-2">

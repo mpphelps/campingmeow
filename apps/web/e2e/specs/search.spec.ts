@@ -1,16 +1,12 @@
 import { test, expect } from "../test-fixtures";
 import { createPark, createFacility, createSlots, nextWeekday, isoDate } from "../utilities/utilities";
 
-// /search answers from our database (AvailabilitySlot rows) but refreshes anything scanned
-// more than five minutes ago first, so seeding `lastScannedAt: new Date()` keeps a test on
-// the stored-data path. The suite also runs with RC_API_OFFLINE=1 (playwright.config.ts),
-// which makes every ReserveCalifornia call throw before it leaves the process — a belt-and-
-// braces guard so no test, and no background scan a test kicks off, can hit the live API.
-test.describe("search page — form only (no live data)", () => {
-  // Signed in: the live-refresh stream and the geocoder are members-only now, and
-  // the never-scanned case below needs the stream to run (and fail) to be reached.
-  test.use({ user: { email: "searcher@example.com", firstName: "Search", lastName: "Er" } });
-
+// /search reads ONLY our database (AvailabilitySlot rows) — it never calls
+// ReserveCalifornia. Data gets there via the nightly full-catalog sweep and the
+// watched-campground sweeps, so tests seed rows directly. The suite also runs with
+// RC_API_OFFLINE=1 and DISABLE_SCHEDULER=1 (playwright.config.ts) so nothing a test
+// triggers can reach the live API.
+test.describe("search page — form only", () => {
   test("renders the form for valid facilities without requesting results", async ({ page }) => {
     const park = await createPark({ name: "Sequoia" });
     const facility = await createFacility({ name: "Lodgepole", parkId: park.id });
@@ -79,10 +75,6 @@ test.describe("search page — form only (no live data)", () => {
 });
 
 test.describe("search page — results from stored availability", () => {
-  // Signed in: the never-scanned case below needs the members-only refresh stream
-  // to run (and fail, under RC_API_OFFLINE) before the row settles.
-  test.use({ user: { email: "stored@example.com", firstName: "Stored", lastName: "Data" } });
-
   test("shows openings that match seeded free nights", async ({ page }) => {
     const park = await createPark({ name: "Yosemite" });
     const facility = await createFacility({ name: "Upper Pines", parkId: park.id, lastScannedAt: new Date() });
@@ -110,15 +102,12 @@ test.describe("search page — results from stored availability", () => {
 
     await page.goto(`/search?facilities=${facility.id}&days=5&days=6`);
 
-    await expect(page.getByText("Nothing open for this pattern right now.")).toBeVisible();
+    await expect(page.getByText("Nothing open for this pattern as of the last sweep.")).toBeVisible();
     await expect(page.getByText("so there's nothing to search", { exact: false })).toHaveCount(0);
   });
 
-  // A never-scanned facility is stale by definition, so the page renders it as pending and
-  // the SSE stream tries to refresh it. RC_API_OFFLINE=1 (playwright.config.ts) makes that
-  // attempt fail immediately instead of reaching ReserveCalifornia, so this also covers the
-  // stream's failure path: progress resolves, and the row settles on "never scanned" rather
-  // than claiming to show older data it doesn't have.
+  // Nothing has ever scanned this campground, so we have no rows for it — saying
+  // "nothing open" would be a lie.
   test("says so when a campground has never been scanned", async ({ page }) => {
     const park = await createPark({ name: "Anza-Borrego" });
     const facility = await createFacility({ name: "Tamarisk Grove", parkId: park.id, lastScannedAt: null });
@@ -127,47 +116,11 @@ test.describe("search page — results from stored availability", () => {
 
     await expect(page.getByText("so there's nothing to search", { exact: false })).toBeVisible();
     await expect(page.getByText("No data yet — a watch will start the first scan.")).toBeVisible();
-    // Starts as "checking now…", then settles once the refresh fails.
     await expect(page.getByText("not scanned yet")).toBeVisible();
-    // There is no older data, so it must never claim to be showing any.
-    await expect(page.getByText("showing the last data we stored", { exact: false })).toHaveCount(0);
-    // The progress bar must not be left spinning forever.
-    await expect(page.getByText("Checking ReserveCalifornia", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("We haven't scanned these campgrounds yet.")).toBeVisible();
   });
 });
 
-// A search whose campgrounds are all fresh has nothing to refresh, so the page must not
-// open a progress stream at all — no progress bar, no ReserveCalifornia calls.
-test.describe("search page — progress stream", () => {
-  test.use({ user: { email: "streamer@example.com", firstName: "Stream", lastName: "Er" } });
-
-  test("shows no progress bar when every campground is already fresh", async ({ page }) => {
-    const park = await createPark({ name: "Point Reyes" });
-    const facility = await createFacility({ name: "Sky Camp", parkId: park.id, lastScannedAt: new Date() });
-
-    await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
-
-    await expect(page.getByText("Nothing open for this pattern right now.")).toBeVisible();
-    await expect(page.getByText("Checking ReserveCalifornia", { exact: false })).toHaveCount(0);
-  });
-
-  test("streams progress and clears it when the refresh finishes", async ({ page }) => {
-    const park = await createPark({ name: "Julia Pfeiffer Burns" });
-    // Older than FRESHNESS_MS (5 min), so the page opens the stream on load.
-    const facility = await createFacility({
-      name: "Environmental Camp",
-      parkId: park.id,
-      lastScannedAt: new Date(Date.now() - 60 * 60 * 1000),
-    });
-
-    await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
-
-    // The refresh fails fast (RC_API_OFFLINE), so the stream reports it as stale
-    // and takes the progress bar away rather than hanging.
-    await expect(page.getByText("We couldn't reach ReserveCalifornia for Environmental Camp")).toBeVisible();
-    await expect(page.getByText("Checking ReserveCalifornia", { exact: false })).toHaveCount(0);
-  });
-});
 
 // The geocoder proxies to OpenStreetMap Nominatim (external, rate-limited to 1 req/sec).
 // Only the short-query validation path is safe to test — it returns before any network call.
@@ -187,20 +140,20 @@ test.describe("geocode endpoint", () => {
   });
 });
 
-// Selecting every park would queue hundreds of campgrounds' worth of live ReserveCalifornia
-// requests, so both the service layer and the UI cap it. See app/lib/limits.ts.
+// Search no longer spends API budget, so the cap only bounds one query and one page of
+// results — but it still has to hold against a hand-edited URL. See app/lib/limits.ts.
 test.describe("search limits", () => {
   test("refuses a search over the campground cap and offers a way out", async ({ page }) => {
     const park = await createPark({ name: "Big Basin" });
     const ids: string[] = [];
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 51; i++) {
       const facility = await createFacility({ name: `Camp ${i}`, parkId: park.id, lastScannedAt: new Date() });
       ids.push(facility.id);
     }
 
     await page.goto(`/search?facilities=${ids.join(",")}&days=5&nights=1&bounds=anytime`);
 
-    await expect(page.getByText("pick at most 10 at a time (you picked 11)")).toBeVisible();
+    await expect(page.getByText("Pick at most 50 campgrounds at a time (you picked 51)")).toBeVisible();
     await expect(page.getByRole("link", { name: "watch them all instead" })).toBeVisible();
     // No results block, and nothing was scanned.
     await expect(page.getByText("matching check-in date", { exact: false })).toHaveCount(0);
@@ -209,7 +162,7 @@ test.describe("search limits", () => {
   test("allows a search exactly at the cap", async ({ page }) => {
     const park = await createPark({ name: "Henry Coe" });
     const ids: string[] = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 50; i++) {
       const facility = await createFacility({ name: `Site ${i}`, parkId: park.id, lastScannedAt: new Date() });
       ids.push(facility.id);
     }
@@ -217,21 +170,14 @@ test.describe("search limits", () => {
     await page.goto(`/search?facilities=${ids.join(",")}&days=5&nights=1&bounds=anytime`);
 
     await expect(page.getByText("matching check-in date", { exact: false })).toBeVisible();
-    await expect(page.getByText("pick at most 10", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("Pick at most 50", { exact: false })).toHaveCount(0);
   });
 });
 
-// Both endpoints spend an external budget (ReserveCalifornia, Nominatim), so
-// neither is public. Signed-out visitors still get stored data, just no refresh.
-test.describe("api auth — logged out", () => {
+// Geocoding still proxies Nominatim, so it stays members-only. Search doesn't spend any
+// external budget any more, so it's open to everyone.
+test.describe("public access — logged out", () => {
   test.use({ user: null });
-
-  test("search-progress returns 401", async ({ page }) => {
-    const park = await createPark({ name: "Salt Point" });
-    const facility = await createFacility({ name: "Woodside", parkId: park.id });
-    const response = await page.request.get(`/api/search-progress?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
-    expect(response.status()).toBe(401);
-  });
 
   test("geocode returns 401 before calling the external geocoder", async ({ page }) => {
     const response = await page.request.get("/api/geocode?q=Newport%20Beach");
@@ -239,29 +185,18 @@ test.describe("api auth — logged out", () => {
     expect((await response.json()).authRequired).toBe(true);
   });
 
-  test("search page still shows stored data, with a sign-in prompt instead of a refresh", async ({ page }) => {
+  test("search works signed out, and says how old the data is", async ({ page }) => {
     const park = await createPark({ name: "Sugar Pine Point" });
     const facility = await createFacility({
       name: "General Creek",
       parkId: park.id,
-      lastScannedAt: new Date(Date.now() - 60 * 60 * 1000),
+      lastScannedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
     });
 
     await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
 
-    await expect(page.getByText("to check these 1 campground against ReserveCalifornia", { exact: false })).toBeVisible();
-    await expect(page.getByText("Checking ReserveCalifornia", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("matching check-in date", { exact: false })).toBeVisible();
+    await expect(page.getByText("Last updated 3h ago")).toBeVisible();
   });
 });
 
-test.describe("api auth — signed in", () => {
-  test.use({ user: { email: "member@example.com", firstName: "Mem", lastName: "Ber" } });
-
-  test("search-progress is reachable", async ({ page }) => {
-    const park = await createPark({ name: "Del Norte" });
-    const facility = await createFacility({ name: "Mill Creek", parkId: park.id, lastScannedAt: new Date() });
-    // Everything is fresh, so the stream opens, finds nothing to do, and closes.
-    const response = await page.request.get(`/api/search-progress?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
-    expect(response.status()).toBe(200);
-  });
-});

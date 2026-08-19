@@ -19,6 +19,4 @@ export default [
   route("auth/test-login", "routes/auth.test-login.ts"),
   route("api/catalog-sync", "routes/api.catalog-sync.ts"),
   route("api/geocode", "routes/api.geocode.ts"),
-  route("api/scan-watched", "routes/api.scan-watched.ts"),
-  route("api/search-progress", "routes/api.search-progress.ts"),
 ] satisfies RouteConfig;

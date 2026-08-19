@@ -8,15 +8,15 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 
 1. **Catalog.** Sync all parks (~299) and campground facilities (~517) from ReserveCalifornia daily, including lat/long. Facilities that disappear from the API are marked inactive, never deleted — this doubles as our recovery path if IDs change.
 2. **Browse.** Users can browse and search the catalog of parks and facilities.
-3. **Watches.** A user holds **one active watch** (early-access limit) covering up to **20 facilities** (across any parks) with a shared date pattern: check-in weekdays, nights (1–7), and optional check-in date bounds. Example: "any Friday, 2 nights, June–August — at Moro Campground or San Mateo." Unbounded watches cover the full booking window and roll forward with it; a bounded watch whose end date has passed is auto-deactivated by the scanner.
-4. **Scanning.** A background worker scans only watched facilities, on repeat, across the full 6-month booking window. When a watch is created for a facility not yet in rotation, that facility is scanned immediately so the user sees data right away.
+3. **Watches.** A user holds **one active watch** (early-access limit) covering up to **20 facilities** (across any parks) with a shared date pattern: check-in weekdays and nights (1–7). Example: "any Friday, 2 nights — at Moro Campground or San Mateo." **A watch has no date bounds**: it always covers the full booking window and rolls forward as ReserveCalifornia opens new dates. Bounded watches were removed deliberately — they bought nothing (the scanner scans the whole window regardless of what any one watch cares about) and cost an expiry concept, where an expired watch silently kept its campgrounds on the hourly scan tier and blocked the per-user limit forever.
+4. **Scanning.** The scanner is the only thing that talks to ReserveCalifornia. It runs continuously, always scanning whichever campground is **most overdue**: watched campgrounds have a one-hour freshness target, everything else twenty-four hours. There are no discrete sweeps and no job queue — see §4.
 5. **Availability state.** One row per (facility, unit, date) holding current availability, refreshed each scan. Rows for past dates are kept for future trending features.
-5b. **Search with freshness.** Users can check availability for at most **10 campgrounds** at a time (see `app/lib/limits.ts`) and a date pattern, without creating a watch. The page answers immediately from our database, then re-scans any campground last scanned more than **5 minutes** ago in the background, streaming each result back over server-sent events with a progress bar. Nobody waits on a refresh: results appear at once and improve as scans land. Closing the page stops the scans. A campground never scanned says so explicitly rather than reporting "nothing open"; one whose refresh fails says it is showing stored data.
+5b. **Search reads our database only.** Users can check availability for selected campgrounds and a date pattern without creating a watch. Search **never calls ReserveCalifornia** — it is one indexed query, so it answers in ~200ms no matter how many people search at once. It is explicitly a snapshot, not live: every result shows when it was last updated, and a campground never scanned says so rather than reporting "nothing open". Live refresh-on-search was removed deliberately — at 9 requests per campground it made searches compete with the scanner for the one budget that matters, and got unusable at a handful of concurrent users.
 6. **Notifications.** Email only (free-tier provider such as Resend). Sent when a slot flips unavailable → available and matches a watch. No repeat emails while the slot stays open. Email links to the facility's page on ReserveCalifornia.
 7. **Politeness.** One request every **1 second**, matching camply (`juftin/camply`), which has run against this API for years at that rate. Enforced by a **global rate gate** in `packages/scanner` that every request queues at, so the rate is a property of the process and no amount of concurrency can raise it — only lengthen the queue. Concurrent scans of the same campground are deduplicated rather than run twice. A 429 or 403 trips a circuit breaker that stops all scanning until the block expires; we never retry one, because retrying deepens the penalty — a 15-minute-to-several-hour IP blacklist that takes the whole app down, not just the scan. Caveat: camply spreads its load over thousands of users' IPs in short bursts where we are one Pi running continuously, so 1s is a ceiling, not a target. See `packages/scanner/API.md` §4b.
-8. **Monitoring.** Track sweep duration, emails sent per day, and number of watched facilities. If sweeps get slow we miss cancellations; if emails spike we hit provider limits. These metrics must be visible (admin panel) before we need them.
-9. **Admin panel.** Admin-only page: list users, see each user's watches, remove/ban users, view the health metrics above, run a catalog sync, and start an availability sweep of either the watched campgrounds or the entire catalog (~500 campgrounds, ~1.5 hours). Sweeps run in the background with live progress and can be stopped mid-run.
-9b. **Endpoints that spend an external budget require an account.** Browsing parks and reading stored availability is public; `/api/search-progress` (ReserveCalifornia) and `/api/geocode` (Nominatim) return 401 to anonymous callers. Per-request caps bound one request, not how many a stranger opens at once — an account is what makes abuse attributable.
+8. **Monitoring.** Track scanner backlog (campgrounds past their freshness target), worst-case staleness (oldest scan), throughput (campgrounds scanned per hour), emails sent per day, and number of watched campgrounds. A rising backlog or an oldest-scan past its target means we are falling behind and will start missing cancellations.
+9. **Admin panel.** Admin-only page: list users, see each user's watches, remove/ban users, run a catalog sync, and read scanner health — status, backlog, worst staleness, throughput. There are no sweep buttons: the scanner picks its own work, so there is nothing to start or stop.
+9b. **Endpoints that spend an external budget require an account.** Browsing parks and reading stored availability is public — neither costs us anything outside our own database. `/api/geocode` (OpenStreetMap Nominatim) returns 401 to anonymous callers, because per-request caps bound one request, not how many a stranger opens at once.
 10. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and checked in the service layer (same pattern as auth today).
 11. **Location search.** "Parks near me" by haversine distance on stored park lat/long. A typed address/city/ZIP is the primary input (geocoded server-side via OpenStreetMap Nominatim — free, throttled to 1 req/sec, cached); browser geolocation is a secondary option because VPNs make it unreliable.
 12. **Branding.** CampingMeow favicon (replace the Bookshelf icon). Mascot: a cat in a Super Troopers hat asking if you want to go camping right meow.
@@ -26,32 +26,52 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 - **User** — exists today (Auth0 sync). Add role.
 - **Park** — RC place id, name, city, lat/long, active flag. Coordinates power distance search.
 - **Facility** — RC facility id, name, parent park, active flag, `lastScannedAt` (null = never scanned). No lat/long: RC only has park-level coordinates.
-- **Watch** — user, check-in weekdays, nights, optional date bounds, active flag.
+- **Watch** — user, check-in weekdays, nights, active flag. No date bounds, so nothing expires.
 - **WatchFacility** — join table: the facilities a watch covers (one pattern, many campgrounds).
 - **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated timestamp. Unique per (facility, unit, date). Every night in the scanned window is stored, taken ones included, so a search can tell "booked" from "never scanned".
 - **AvailabilityEvent** — append-only log of open/close transitions. Powers notification dedup, trending later, and the emails-per-day metric.
-- **SweepRun** — when a sweep started/finished, facilities scanned, errors. Powers the sweep-duration metric.
+- *(No job or sweep table.)* Scanner health is derived from `Facility.lastScannedAt`: backlog is the count past its freshness target, throughput is the count scanned in the last hour, and worst-case staleness is the oldest timestamp. A jobs table would be a second, drifting copy of state we already keep.
 
 ## 4. Scanner design
 
-- Runs as its own container on the Pi alongside the web app.
-- **Watched campgrounds only, full 180-day window, hourly.** Deliberately simple: the worker does not try to scan selectively around each user's date pattern. It grid-scans every watched campground end to end and lets the matching logic sort it out.
-- Loop: load active watches → distinct facilities → grid-scan each (9 calls per facility, 1s apart, ~11s per campground) → upsert AvailabilitySlot → write AvailabilityEvent on transitions → record SweepRun → repeat.
-- Watch creation triggers an immediate scan of that facility (~11 seconds).
-- Budget: ~11s per watched campground, so hourly cadence supports roughly 300 watched campgrounds at a 100% duty cycle — far more headroom than we need, and the per-watch cap of 20 keeps any one user from eating it.
-- Anything fresher than hourly is served by the live search path (§2.5b), not the worker.
-- Full-catalog sweeps stay a manual admin action (§2.9), not something the worker does on a schedule — at ~3 hours of continuous requests it is the single riskiest operation in the app.
+One loop, one question — "what is most overdue?" — then scan it and ask again.
+
+```
+pickNext():
+  watched campground not scanned in the last hour   -> oldest first
+  any campground not scanned in the last 24 hours   -> oldest first
+  otherwise                                         -> sleep 30s
+```
+
+- **No job queue, by design.** Scan work is derivable: it is a pure function of
+  `Facility.lastScannedAt`. A queue would be a second copy of state we already
+  store, with its own drift, cleanup and locking to get wrong.
+- **Crash recovery is free.** Campgrounds already scanned have a fresh
+  timestamp and sort to the back, so a restart resumes where it left off.
+- **Priority is free.** A newly watched campground has `lastScannedAt = null`,
+  which sorts first, so it is picked next without a priority column. Creating a
+  watch only nudges the loop awake early.
+- **No collisions.** There are no discrete sweeps, so nothing has to be skipped
+  or queued behind anything else. Watched work is re-checked every iteration,
+  so it always preempts catalog backlog regardless of relative age.
+- **Runs in the web app's process, not its own container.** The rate gate that
+  keeps us under ReserveCalifornia's limit is per-process state, so a second
+  container would get its own gate and silently double our request rate. One
+  process, one gate — revisit only with shared (Postgres-backed) state.
+- Cost: 9 calls per campground at 1s apart, ~11s each. ~500 campgrounds on a
+  24-hour target is roughly a 5% duty cycle, so the loop is idle most of the
+  day and watched work never waits.
 
 ## 5. Notifications
 
-- On an unavailable → available event, find watches whose pattern matches the slot's facility, weekday, and (with consecutive open nights) night count.
+- On an unavailable → available event, find watches whose pattern matches the slot's facility, weekday, and (with consecutive open nights) night count. No date filtering: a watch covers the whole window.
 - One email per matched watch per opening. No re-send while it stays open; if it closes and reopens, that's a new event and a new email.
 - Email contains facility name, dates, and a link to ReserveCalifornia.
 
 ## 6. Out of scope (for now)
 
 - SMS and push notifications.
-- Hard limits on watches per user (monitored instead — revisit if metrics say so).
+- More than one watch per user (capped at 1 for early access; raise once the scanner's real duty cycle is measured).
 - Non-California sources.
 - Trend charts (we keep the data; we don't build the UI yet).
 
@@ -96,13 +116,12 @@ Supporting rules:
   interactive markup loses keyboard support, ARIA state, and focus management.
 - Authorization checks live in the service layer, never in routes or
   repositories.
-- **Slow work streams, it doesn't block.** Anything that takes more than a
-  second or two answers from storage first and pushes updates over server-sent
-  events (`text/event-stream` resource route). The domain service exposes it as
-  an async generator taking an `AbortSignal`; the route only serialises frames.
-  Each event carries a complete replacement snapshot, so the UI swaps state in
-  rather than merging — the same "services return UI-ready shapes" rule. The
-  signal must actually stop the work: a closed tab means nobody is waiting.
+- **Expensive external work belongs to the scanner, not the request path.** Read
+  paths answer from Postgres and say how old the data is; only the scanner
+  calls ReserveCalifornia, behind the global rate gate. We tried the opposite
+  (refresh-on-search, streamed over SSE) and removed it: it made every reader
+  compete for the one budget that matters and fell over at a handful of
+  concurrent users.
 
 ## 8. Implementation phases
 

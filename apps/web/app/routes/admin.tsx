@@ -8,7 +8,6 @@ import { ForbiddenError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
 import type { AuthUser } from "~/services/auth.service.server";
 import { adminService } from "~/services/admin.service.server";
-import type { SweepState } from "~/services/availability.service.server";
 import type { CatalogSyncResult } from "~/services/catalog.service.server";
 
 export const loader = withAuth(async ({ user }: Route.LoaderArgs & { user: AuthUser }) => {
@@ -27,18 +26,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const { dashboard } = loaderData;
   const sync = useFetcher<CatalogSyncResult>();
   const syncing = sync.state !== "idle";
-  const sweep = useFetcher<SweepState>();
-  // The fetcher's reply is fresher than the loader's copy right after starting.
-  const sweepState = sweep.data ?? dashboard.sweep;
-  const sweepRunning = sweepState.running || sweep.state !== "idle";
+  const scanner = dashboard.scanner;
 
-  // A sweep runs in the background, so poll for progress while it does.
+  // The scanner never stops, so keep the numbers moving while this page is open.
   const revalidator = useRevalidator();
   useEffect(() => {
-    if (!sweepState.running) return;
-    const id = setInterval(() => revalidator.revalidate(), 5000);
+    const id = setInterval(() => revalidator.revalidate(), 10_000);
     return () => clearInterval(id);
-  }, [sweepState.running, revalidator]);
+  }, [revalidator]);
 
   const stats = [
     { label: "Users", value: dashboard.stats.userCount },
@@ -47,13 +42,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Active watches", value: dashboard.stats.watchCount },
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
     { label: "Requests queued", value: dashboard.queueDepth },
+    { label: "Scanned / hr", value: scanner.scannedLastHour },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-7">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -87,13 +83,12 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
 
         <Card>
           <CardHeader>
-            <CardTitle>Availability sweep</CardTitle>
+            <CardTitle>Scanner</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-sm text-muted-foreground">
-              Scan campgrounds and store what&apos;s open. We hold to one request every 2.5s to stay under ReserveCalifornia&apos;s
-              rate limit, so each campground takes roughly 30 seconds and a full sweep runs for hours. It runs in the background —
-              you can leave this page.
+              Runs continuously, always scanning whichever campground is most overdue — watched ones first (target: under an hour
+              old), then the rest of the catalog (under a day). Every request queues at a global one-per-second gate.
             </p>
 
             {dashboard.rateLimit.blocked && (
@@ -102,55 +97,33 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
               </div>
             )}
-            <div className="flex flex-wrap gap-2">
-              <sweep.Form method="post" action="/api/scan-watched">
-                <input type="hidden" name="scope" value="watched" />
-                <Button type="submit" disabled={sweepRunning}>
-                  Scan watched ({dashboard.stats.watchedFacilityCount})
-                </Button>
-              </sweep.Form>
-              <sweep.Form method="post" action="/api/scan-watched">
-                <input type="hidden" name="scope" value="all" />
-                <Button type="submit" variant="outline" disabled={sweepRunning}>
-                  Full sweep — all {dashboard.stats.facilityCount}
-                </Button>
-              </sweep.Form>
-            </div>
 
-            {sweepState.running ? (
-              <div className="mt-4">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
-                  <div
-                    className="h-full bg-primary transition-all"
-                    style={{ width: `${sweepState.total ? Math.round((sweepState.done / sweepState.total) * 100) : 0}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-sm text-muted-foreground">
-                    {sweepState.scope === "all" ? "Full sweep" : "Watched sweep"}: {sweepState.done} of {sweepState.total}
-                    {sweepState.failed > 0 ? ` · ${sweepState.failed} failed` : ""}
-                    {sweepState.currentFacility ? ` · last: ${sweepState.currentFacility}` : ""}
-                  </p>
-                  <sweep.Form method="post" action="/api/scan-watched">
-                    <input type="hidden" name="intent" value="cancel" />
-                    <Button type="submit" variant="outline" size="sm">
-                      Stop sweep
-                    </Button>
-                  </sweep.Form>
-                </div>
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-muted-foreground">Status</dt>
+                <dd className="font-medium">
+                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Idle — nothing overdue"}
+                </dd>
               </div>
-            ) : sweepState.finishedAt ? (
-              <p className="mt-3 text-sm text-muted-foreground">
-                {sweepState.cancelled
-                  ? "Last sweep stopped by an admin"
-                  : sweepState.blockedUntil
-                    ? "Last sweep stopped early (rate limited)"
-                    : "Last sweep finished"}{" "}
-                {new Date(sweepState.finishedAt).toLocaleTimeString()}: {sweepState.done} campground
-                {sweepState.done === 1 ? "" : "s"}
-                {sweepState.failed > 0 ? `, ${sweepState.failed} failed` : ""}.
-              </p>
-            ) : null}
+              <div>
+                <dt className="text-muted-foreground">Overdue</dt>
+                <dd className="font-medium tabular-nums">
+                  {scanner.watchedOverdue} watched · {scanner.catalogOverdue} catalog
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Oldest watched scan</dt>
+                <dd className="font-medium">{scanner.oldestWatchedScan ? timeAgo(scanner.oldestWatchedScan) : "never"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Oldest catalog scan</dt>
+                <dd className="font-medium">{scanner.oldestCatalogScan ? timeAgo(scanner.oldestCatalogScan) : "never"}</dd>
+              </div>
+            </dl>
+
+            <p className="mt-3 text-xs text-muted-foreground">
+              A rising overdue count or an oldest scan past its target means we are not keeping up.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -180,6 +153,15 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
       </div>
     </div>
   );
+}
+
+function timeAgo(iso: string): string {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";

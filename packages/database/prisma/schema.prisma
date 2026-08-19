@@ -54,6 +54,9 @@ model Facility {
   slots           AvailabilitySlot[]
 
   @@index([parkId])
+  // The scanner picks work by "most overdue first", so it reads this ordering
+  // on every iteration. Nulls (never scanned) sort first and get scanned first.
+  @@index([active, lastScannedAt])
 }
 
 // Current known availability: one row per campsite per night, upserted on
@@ -83,9 +86,11 @@ model Watch {
   checkinDays Int[]
   // Consecutive nights that must all be free (1-7; enforced in the service).
   nights      Int
-  // Optional bounds on check-in date. Null = the full (rolling) booking window.
-  startDate   DateTime?       @db.Date
-  endDate     DateTime?       @db.Date
+  // No date bounds by design: a watch always covers the full rolling booking
+  // window. Bounded watches meant an expiry concept (and an expired watch that
+  // silently kept its campgrounds on the hourly scan tier and blocked the
+  // per-user limit) for no real gain — the scanner scans the whole window
+  // regardless of what dates any one watch cares about.
   active      Boolean         @default(true)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt

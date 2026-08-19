@@ -88,6 +88,10 @@ export default defineConfig({
       // Tests must never touch the real ReserveCalifornia API: seeded facility
       // ids are fake, and background scans fire without a test awaiting them.
       RC_API_OFFLINE: "1",
+      // The scanner would otherwise start picking up seeded facilities the
+      // moment a test creates one. RC_API_OFFLINE already blocks the calls;
+      // this stops the loop existing at all.
+      DISABLE_SCANNER: "1",
       AUTH0_DOMAIN: process.env.AUTH0_DOMAIN ?? "test.auth0.com",
       AUTH0_CLIENT_ID: process.env.AUTH0_CLIENT_ID ?? "test-client-id",
       AUTH0_CLIENT_SECRET: process.env.AUTH0_CLIENT_SECRET ?? "test-client-secret",
