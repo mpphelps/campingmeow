@@ -42,11 +42,12 @@ test.describe("admin dashboard", () => {
     await expect(page.getByRole("button", { name: "Sync catalog now" })).toBeVisible();
     // NOTE: intentionally not clicking "Sync catalog now" — it calls the real ReserveCalifornia API.
 
-    await expect(page.getByText("Availability sweep", { exact: true })).toBeVisible();
-    // Counts mirror the stat cards above: 1 watched campground, 1 active campground total.
-    await expect(page.getByRole("button", { name: "Scan watched (1)" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Full sweep — all 1" })).toBeVisible();
-    // NOTE: intentionally not clicking either — both kick off real scans in the background.
+    // The scanner runs itself; the panel reports health rather than offering buttons.
+    await expect(page.getByText("Scanner", { exact: true })).toBeVisible();
+    await expect(page.getByText("Stopped")).toBeVisible(); // DISABLE_SCANNER=1 in tests
+    // One active campground, never scanned, so it is overdue on both counts.
+    await expect(page.getByText("1 watched · 1 catalog")).toBeVisible();
+    await expect(page.getByText("never")).toHaveCount(2);
 
     const table = page.locator("table");
     const adminRow = table.locator("tr", { hasText: "admin@example.com" });
@@ -101,46 +102,4 @@ test.describe("catalog sync endpoint — non-admin", () => {
   });
 });
 
-// startSweep checks the admin permission before touching any campground, so non-admin/logged-out
-// requests never reach ReserveCalifornia. A 200 response would kick off a real background sweep
-// of every watched (or every catalog) campground, so that path is intentionally not exercised here.
-test.describe("scan-watched endpoint", () => {
-  test.use({ user: null });
 
-  test("returns 401 when logged out", async ({ page }) => {
-    const response = await page.request.post("/api/scan-watched");
-    expect(response.status()).toBe(401);
-  });
-});
-
-test.describe("scan-watched endpoint — non-admin", () => {
-  test.use({ user: { email: "noperm2@example.com", firstName: "No", lastName: "Perm" } });
-
-  test("returns 403 for a logged-in user without admin:site", async ({ page }) => {
-    // The action reads `scope` from formData before checking permission, so a bodyless
-    // request 500s trying to parse it — send a real form body, as the UI always would.
-    const response = await page.request.post("/api/scan-watched", { form: { scope: "watched" } });
-    expect(response.status()).toBe(403);
-  });
-});
-
-// A full sweep is ~1.5 hours of continuous requests, so it must be stoppable.
-test.describe("sweep cancellation", () => {
-  test.use({ user: { email: "sweepadmin@example.com", firstName: "Sweep", lastName: "Admin", permissions: ["admin:site"] } });
-
-  test("cancelling an idle sweep is a no-op that still reports state", async ({ page }) => {
-    const response = await page.request.post("/api/scan-watched", { form: { intent: "cancel" } });
-    expect(response.status()).toBe(200);
-    const state = await response.json();
-    expect(state.running).toBe(false);
-  });
-});
-
-test.describe("sweep cancellation — non-admin", () => {
-  test.use({ user: { email: "notadmin@example.com", firstName: "Not", lastName: "Admin" } });
-
-  test("returns 403", async ({ page }) => {
-    const response = await page.request.post("/api/scan-watched", { form: { intent: "cancel" } });
-    expect(response.status()).toBe(403);
-  });
-});

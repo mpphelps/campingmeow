@@ -18,19 +18,15 @@ test.describe("watches", () => {
     // The campground referred from the park page is pre-checked in the picker.
     await expect(page.getByLabel("Yosemite · Upper Pines")).toHaveAttribute("aria-checked", "true");
 
-    // Fri + Sat are pre-checked; keep that, just change nights and add date bounds.
+    // Fri + Sat are pre-checked; keep that and just change nights. A watch has no
+    // date bounds — it always covers the full rolling booking window.
     await page.getByLabel("Nights").fill("2");
-    // Radix RadioGroupItem/Checkbox render as <button role="checkbox|radio">, not native
-    // inputs — .check()/.uncheck() can silently no-op on them, so use .click() + aria-checked.
-    await page.getByLabel("Only between specific dates").click();
-    await page.locator("#startDate").fill("2026-09-01");
-    await page.locator("#endDate").fill("2026-09-30");
     await page.getByRole("button", { name: "Create watch" }).click();
 
     await expect(page).toHaveURL(/\/watches$/);
     await expect(page.getByText("Yosemite", { exact: true })).toBeVisible();
     await expect(page.getByText("Upper Pines")).toBeVisible();
-    await expect(page.getByText("Check-in Fri, Sat · 2 nights · 2026-09-01 → 2026-09-30")).toBeVisible();
+    await expect(page.getByText("Check-in Fri, Sat · 2 nights · anytime in the booking window")).toBeVisible();
   });
 
   test("creates a watch covering multiple campgrounds across parks", async ({ page }) => {
@@ -53,23 +49,16 @@ test.describe("watches", () => {
     await expect(page.getByText("Sentinel")).toBeVisible();
   });
 
-  test("only reveals date inputs when a specific date range is chosen", async ({ page }) => {
+  test("offers no date bounds — a watch always covers the whole window", async ({ page }) => {
     const park = await createPark({ name: "Death Valley" });
     await createFacility({ name: "Furnace Creek", parkId: park.id });
 
     await page.goto("/watches/new");
 
-    // "Anytime in the booking window" is the default — no date inputs rendered.
     await expect(page.locator("#startDate")).toHaveCount(0);
     await expect(page.locator("#endDate")).toHaveCount(0);
-
-    await page.getByLabel("Only between specific dates").click();
-    await expect(page.locator("#startDate")).toBeVisible();
-    await expect(page.locator("#endDate")).toBeVisible();
-
-    await page.getByLabel("Anytime in the booking window").click();
-    await expect(page.locator("#startDate")).toHaveCount(0);
-    await expect(page.locator("#endDate")).toHaveCount(0);
+    await expect(page.getByText("Only between specific dates")).toHaveCount(0);
+    await expect(page.getByText("rolls forward as ReserveCalifornia opens new dates", { exact: false })).toBeVisible();
   });
 
   test("shows a validation error when no check-in days are selected", async ({ page }) => {
@@ -170,7 +159,6 @@ test.describe("watch limits", () => {
     for (const id of ids) body.append("facilityIds", id);
     body.append("checkinDays", "5");
     body.append("nights", "1");
-    body.append("bounds", "anytime");
 
     const response = await page.request.post("/watches/new", {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -1,5 +1,6 @@
 import { authService, type AuthUser } from "./auth.service.server";
-import { availabilityService, type SweepState } from "./availability.service.server";
+import { availabilityService } from "./availability.service.server";
+import { scannerService, type ScannerStatus } from "./scanner.service.server";
 import { userRepository } from "../repositories/user.repository.server";
 import { parkRepository } from "../repositories/park.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
@@ -15,11 +16,12 @@ export interface AdminDashboard {
     watchCount: number;
     watchedFacilityCount: number;
   };
-  sweep: SweepState;
+  scanner: ScannerStatus;
   /** Set while ReserveCalifornia has us blocked; nothing will scan until it clears. */
   rateLimit: { blocked: boolean; until: string | null };
   /** ReserveCalifornia requests waiting at the global rate gate. */
   queueDepth: number;
+
   users: {
     id: string;
     email: string;
@@ -38,13 +40,14 @@ export const adminService = {
 async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
   authService.requirePermission(user, ADMIN_PERMISSION);
 
-  const [userCount, parkCount, facilityCount, watchCount, watchedFacilityIds, users] = await Promise.all([
+  const [userCount, parkCount, facilityCount, watchCount, watchedFacilityIds, users, scanner] = await Promise.all([
     userRepository.count(),
     parkRepository.countActive(),
     facilityRepository.countActive(),
     watchRepository.countActive(),
     watchRepository.listWatchedFacilityIds(),
     userRepository.listAllWithWatchCounts(),
+    scannerService.getStatus(),
   ]);
 
   return {
@@ -55,7 +58,7 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       watchCount,
       watchedFacilityCount: watchedFacilityIds.length,
     },
-    sweep: availabilityService.getSweepState(),
+    scanner,
     rateLimit: availabilityService.getRateLimitState(),
     queueDepth: availabilityService.getQueueDepth(),
     users: users.map((u) => ({

@@ -246,10 +246,10 @@ test.describe("park detail", () => {
   });
 });
 
-// Every selected campground costs ~10s of live ReserveCalifornia requests, so the home
-// page caps selection. See app/lib/limits.ts for where the numbers come from.
+// A watch commits us to scanning its campgrounds forever, so the home page caps selection
+// at the watch limit. See app/lib/limits.ts for where the numbers come from.
 test.describe("home page selection limits", () => {
-  test("disables Search availability past 10 and refuses to select past 20", async ({ page }) => {
+  test("refuses to select past the watch cap of 20", async ({ page }) => {
     const park = await createPark({ name: "Big Basin Redwoods" });
     for (let i = 0; i < 21; i++) {
       // Zero-padded so "Camp 01" never also matches "Camp 010".
@@ -273,10 +273,10 @@ test.describe("home page selection limits", () => {
     await expect(page.getByText("10 of 20 campgrounds selected")).toBeVisible();
     await expect(page.getByRole("button", { name: "Search availability" })).toBeEnabled();
 
-    // The 11th is still watchable, but no longer searchable.
+    // Search reads our database, so it stays available all the way to the cap.
     await page.getByLabel("Select Camp 10").click();
     await expect(page.getByText("11 of 20 campgrounds selected")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Search availability" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Search availability" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Create watch (11)" })).toBeEnabled();
 
     for (let i = 11; i < 20; i++) {

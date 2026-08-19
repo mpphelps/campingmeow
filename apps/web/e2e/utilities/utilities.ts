@@ -124,8 +124,6 @@ export type CreateWatchOverrides = {
   facilityIds: string | string[];
   checkinDays?: number[];
   nights?: number;
-  startDate?: Date | null;
-  endDate?: Date | null;
   active?: boolean;
 };
 
@@ -136,8 +134,6 @@ export async function createWatch(overrides: CreateWatchOverrides) {
       userId: overrides.userId,
       checkinDays: overrides.checkinDays ?? [5, 6],
       nights: overrides.nights ?? 1,
-      startDate: overrides.startDate ?? null,
-      endDate: overrides.endDate ?? null,
       active: overrides.active ?? true,
       facilities: { create: facilityIds.map((facilityId) => ({ facilityId })) },
     },

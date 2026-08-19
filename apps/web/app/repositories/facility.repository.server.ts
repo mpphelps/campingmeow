@@ -52,6 +52,52 @@ export const facilityRepository = {
     });
   },
 
+  /**
+   * The single query the scanner runs to decide what to do next: the most
+   * overdue campground, nulls (never scanned) first.
+   *
+   * `watchedOnly` narrows to campgrounds covered by an active watch. Passing a
+   * cutoff of `null` means "any age" — used to drain a backlog.
+   */
+  async findMostOverdue(options: { watchedOnly: boolean; scannedBefore: Date }) {
+    return prisma.facility.findFirst({
+      where: {
+        active: true,
+        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
+        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
+      },
+      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
+    });
+  },
+
+  /** How many campgrounds are past their freshness target — the backlog size. */
+  async countOverdue(options: { watchedOnly: boolean; scannedBefore: Date }) {
+    return prisma.facility.count({
+      where: {
+        active: true,
+        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
+        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
+      },
+    });
+  },
+
+  /** Worst staleness in the catalog: the health number that actually matters. */
+  async findOldestScan(options: { watchedOnly: boolean }) {
+    return prisma.facility.findFirst({
+      where: {
+        active: true,
+        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
+      },
+      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
+      select: { name: true, lastScannedAt: true },
+    });
+  },
+
+  /** Campgrounds scanned since `since` — throughput, derived not counted. */
+  async countScannedSince(since: Date) {
+    return prisma.facility.count({ where: { lastScannedAt: { gte: since } } });
+  },
+
   async listActiveByParkId(parkId: string) {
     return prisma.facility.findMany({
       where: { parkId, active: true },

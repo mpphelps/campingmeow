@@ -2,7 +2,18 @@ import { Link, Links, Meta, Outlet, Scripts, ScrollRestoration, isRouteErrorResp
 
 import type { Route } from "./+types/root";
 import { RouteErrorPanel } from "~/components/layout/route-error-panel";
+import { scannerService } from "~/services/scanner.service.server";
 import "./app.css";
+
+/**
+ * The only reliable server-side "app started" hook without owning a custom
+ * entry.server. `start()` is idempotent, so paying for one function call per
+ * request is cheaper than the boilerplate of revealing the entry module.
+ */
+export async function loader() {
+  scannerService.start();
+  return null;
+}
 
 export const links: Route.LinksFunction = () => [{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }];
 

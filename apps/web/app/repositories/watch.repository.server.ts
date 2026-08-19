@@ -6,8 +6,6 @@ export const watchRepository = {
     facilityIds: string[];
     checkinDays: number[];
     nights: number;
-    startDate: Date | null;
-    endDate: Date | null;
   }) {
     const { facilityIds, ...watch } = data;
     return prisma.watch.create({

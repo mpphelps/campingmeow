@@ -19,9 +19,6 @@ export interface WatchListItem {
   /** e.g. ["Fri", "Sat"] */
   dayLabels: string[];
   nights: number;
-  /** yyyy-MM-dd or null (null = full rolling booking window) */
-  startDate: string | null;
-  endDate: string | null;
   active: boolean;
 }
 
@@ -29,9 +26,6 @@ export interface CreateWatchInput {
   facilityIds: string[];
   checkinDays: number[];
   nights: number;
-  /** yyyy-MM-dd, empty/null = unbounded */
-  startDate: string | null;
-  endDate: string | null;
 }
 
 // Domain service for watches: a user's date-pattern subscriptions, each
@@ -54,12 +48,6 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
 
   if (!Number.isInteger(input.nights) || input.nights < 1 || input.nights > 7) {
     fields.nights = "Nights must be between 1 and 7.";
-  }
-
-  const startDate = parseDateOrNull(input.startDate, "startDate", fields);
-  const endDate = parseDateOrNull(input.endDate, "endDate", fields);
-  if (startDate && endDate && endDate < startDate) {
-    fields.endDate = "End date must be on or after the start date.";
   }
 
   const facilityIds = [...new Set(input.facilityIds)];
@@ -95,8 +83,6 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
     facilityIds,
     checkinDays,
     nights: input.nights,
-    startDate,
-    endDate,
   });
   logger.info(
     { action: "watch.create", watchId: watch.id, userId, facilityCount: facilityIds.length },
@@ -127,8 +113,6 @@ function toListItem(watch: {
   id: string;
   checkinDays: number[];
   nights: number;
-  startDate: Date | null;
-  endDate: Date | null;
   active: boolean;
   facilities: {
     facility: { id: string; name: string; park: { id: string; name: string } };
@@ -146,22 +130,7 @@ function toListItem(watch: {
       .sort((a, b) => a.parkName.localeCompare(b.parkName) || a.facilityName.localeCompare(b.facilityName)),
     dayLabels: [...watch.checkinDays].sort().map((d) => DAY_LABELS[d]),
     nights: watch.nights,
-    startDate: watch.startDate ? watch.startDate.toISOString().slice(0, 10) : null,
-    endDate: watch.endDate ? watch.endDate.toISOString().slice(0, 10) : null,
     active: watch.active,
   };
 }
 
-function parseDateOrNull(value: string | null, field: string, fields: Record<string, string>): Date | null {
-  if (!value) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    fields[field] = "Dates must be yyyy-MM-dd.";
-    return null;
-  }
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) {
-    fields[field] = "Not a real date.";
-    return null;
-  }
-  return date;
-}

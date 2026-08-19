@@ -4,7 +4,6 @@ import { Form, Link, redirect } from "react-router";
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
-import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
 import type { Route } from "./+types/watches.new";
 import { ValidationError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
@@ -47,14 +46,11 @@ export const loader = withAuth(async ({ request }: Route.LoaderArgs & { user: Au
 
 export const action = withAuth(async ({ request, user }: Route.ActionArgs & { user: AuthUser }) => {
   const formData = await request.formData();
-  const bounded = formData.get("bounds") === "range";
   try {
     await watchOrchestratorService.createWatchAndScan(user.id, {
       facilityIds: formData.getAll("facilityIds").map(String),
       checkinDays: formData.getAll("checkinDays").map(Number),
       nights: Number(formData.get("nights")),
-      startDate: bounded ? String(formData.get("startDate") ?? "") || null : null,
-      endDate: bounded ? String(formData.get("endDate") ?? "") || null : null,
     });
   } catch (err) {
     if (err instanceof ValidationError) {
@@ -121,7 +117,6 @@ function FacilityPicker({
 export default function NewWatch({ loaderData, actionData }: Route.ComponentProps) {
   const { facilities, preselectedIds } = loaderData;
   const fields = actionData && "fields" in actionData ? actionData.fields : undefined;
-  const [bounds, setBounds] = useState<"anytime" | "range">("anytime");
 
   return (
     <div className="max-w-2xl">
@@ -165,47 +160,10 @@ export default function NewWatch({ loaderData, actionData }: Route.ComponentProp
           {fields?.nights && <p className="mt-1 text-sm text-destructive">{fields.nights}</p>}
         </div>
 
-        <fieldset>
-          <legend className="text-sm font-medium">When</legend>
-          <RadioGroup
-            name="bounds"
-            value={bounds}
-            onValueChange={(v) => setBounds(v as "anytime" | "range")}
-            className="mt-2"
-          >
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="anytime" id="bounds-anytime" />
-              <label htmlFor="bounds-anytime" className="text-sm">
-                Anytime in the booking window{" "}
-                <span className="text-xs text-muted-foreground">(rolls forward as new dates open, ~6 months out)</span>
-              </label>
-            </div>
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="range" id="bounds-range" />
-              <label htmlFor="bounds-range" className="text-sm">
-                Only between specific dates
-              </label>
-            </div>
-          </RadioGroup>
-          {bounds === "range" && (
-            <div className="mt-3 flex gap-4">
-              <div>
-                <label htmlFor="startDate" className="text-sm font-medium">
-                  Earliest check-in
-                </label>
-                <Input id="startDate" name="startDate" type="date" className="mt-2" />
-                {fields?.startDate && <p className="mt-1 text-sm text-destructive">{fields.startDate}</p>}
-              </div>
-              <div>
-                <label htmlFor="endDate" className="text-sm font-medium">
-                  Latest check-in
-                </label>
-                <Input id="endDate" name="endDate" type="date" className="mt-2" />
-                {fields?.endDate && <p className="mt-1 text-sm text-destructive">{fields.endDate}</p>}
-              </div>
-            </div>
-          )}
-        </fieldset>
+        <p className="text-sm text-muted-foreground">
+          A watch covers the whole booking window and rolls forward as ReserveCalifornia opens new dates — there&apos;s no end
+          date to keep up to date, and nothing to renew.
+        </p>
 
         <Button type="submit">Create watch</Button>
       </Form>

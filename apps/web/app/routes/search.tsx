@@ -1,16 +1,14 @@
-import { useEffect, useState } from "react";
-import { Form, Link, useLocation, useNavigation } from "react-router";
+import { useState } from "react";
+import { Form, Link, useNavigation } from "react-router";
 
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
 import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
-import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/search";
 import { ValidationError } from "~/lib/errors";
 import { parseSearchParams } from "~/lib/search-params";
-import { authService } from "~/services/auth.service.server";
-import { availabilityService, type SearchProgressEvent, type SearchResults } from "~/services/availability.service.server";
+import { availabilityService } from "~/services/availability.service.server";
 import { catalogService } from "~/services/catalog.service.server";
 
 const DAYS = [
@@ -30,18 +28,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   const facilities = await catalogService.listFacilityPicker({ facilityIds });
   if (facilities.length === 0) throw new Response("Not Found", { status: 404 });
 
-  // Browsing stored availability is open to anyone; spending ReserveCalifornia
-  // requests to refresh it is not, so only signed-in users get the live stream.
-  const canRefresh = Boolean(await authService.getAuthenticatedUser(request));
-
   // No search run yet — just show the form.
   if (!hasQuery) {
-    return { facilities, results: null, criteria, fields: undefined, canRefresh };
+    return { facilities, results: null, criteria, fields: undefined };
   }
 
   try {
-    // Stored data only, so this returns immediately. Anything stale is
-    // re-scanned by /api/search-progress and streamed back in below.
+    // Stored data only — no ReserveCalifornia call, so this returns in
+    // milliseconds no matter how many people are searching.
     const results = await availabilityService.searchOpenings({
       facilityIds,
       checkinDays: criteria.checkinDays,
@@ -49,24 +43,22 @@ export async function loader({ request }: Route.LoaderArgs) {
       startDate: criteria.startDate,
       endDate: criteria.endDate,
     });
-    return { facilities, results, criteria, fields: undefined, canRefresh };
+    return { facilities, results, criteria, fields: undefined };
   } catch (err) {
     if (err instanceof ValidationError) {
-      return { facilities, results: null, criteria, fields: err.fields, canRefresh };
+      return { facilities, results: null, criteria, fields: err.fields };
     }
     throw err;
   }
 }
 
 export default function Search({ loaderData }: Route.ComponentProps) {
-  const { facilities, results, criteria, fields, canRefresh } = loaderData;
+  const { facilities, results, criteria, fields } = loaderData;
   const navigation = useNavigation();
   const searching = navigation.state === "loading";
   const [bounds, setBounds] = useState<"anytime" | "range">(criteria.bounds);
   const facilityIds = facilities.map((f) => f.id).join(",");
   const watchHref = `/watches/new?facilities=${facilityIds}`;
-
-  const { live, progress } = useLiveRefresh(results, canRefresh);
 
   return (
     <div>
@@ -75,9 +67,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       </Link>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">Check availability</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-        Searching {facilities.length} campground{facilities.length === 1 ? "" : "s"}. We answer from what we already know, then
-        check ReserveCalifornia for anything older than five minutes and update the results as they come in. Openings move fast —
-        set a watch to be emailed the moment one appears.
+        Searching {facilities.length} campground{facilities.length === 1 ? "" : "s"} from our own records, refreshed by a nightly
+        sweep of every park. Openings move fast and this is a snapshot, not live — set a watch and we&apos;ll email you the moment
+        one appears.
       </p>
 
       {fields?.facilityIds && (
@@ -173,70 +165,44 @@ export default function Search({ loaderData }: Route.ComponentProps) {
         </div>
       </Form>
 
-      {live && (
+      {results && (
         <div className="mt-10 max-w-3xl">
           <p className="text-sm text-muted-foreground">
-            {live.totalOpenings} matching check-in date{live.totalOpenings === 1 ? "" : "s"} between {live.windowStart} and{" "}
-            {live.windowEnd}.
+            {results.totalOpenings} matching check-in date{results.totalOpenings === 1 ? "" : "s"} between {results.windowStart} and{" "}
+            {results.windowEnd}.
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {results.oldestScannedAt ? (
+              <>
+                Last updated <strong className="font-medium text-foreground">{timeAgo(results.oldestScannedAt)}</strong>. Sites can
+                be taken since then — book on ReserveCalifornia to be sure.
+              </>
+            ) : (
+              "We haven't scanned these campgrounds yet."
+            )}
           </p>
 
-          {progress && (
-            <div className="mt-3" role="status" aria-live="polite">
-              <div className="h-2 w-full overflow-hidden rounded-full bg-accent">
-                <div
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }}
-                />
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Checking ReserveCalifornia for live availability — {progress.done} of {progress.total} campground
-                {progress.total === 1 ? "" : "s"}
-                {progress.facilityName ? ` · just did ${progress.facilityName}` : ""}
-              </p>
-            </div>
-          )}
-
-          {!canRefresh && live.staleCount > 0 && (
-            <div className="mt-3 rounded-lg border p-3 text-sm">
-              Showing what we last stored. <a href="/auth/login" className="underline underline-offset-2">Sign in</a> to check
-              these {live.staleCount} campground{live.staleCount === 1 ? "" : "s"} against ReserveCalifornia right now.
-            </div>
-          )}
-
-          {live.stale.length > 0 && (
+          {results.unscanned.length > 0 && (
             <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-              We couldn&apos;t reach ReserveCalifornia for {live.stale.join(", ")}, so{" "}
-              {live.stale.length === 1 ? "it is" : "they are"} showing the last data we stored.
-            </div>
-          )}
-
-          {live.unscanned.length > 0 && (
-            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-              We haven&apos;t scanned {live.unscanned.join(", ")} yet, so there&apos;s nothing to search. Create a watch and
-              we&apos;ll start tracking {live.unscanned.length === 1 ? "it" : "them"} right away.
+              We haven&apos;t scanned {results.unscanned.join(", ")} yet, so there&apos;s nothing to search. Create a watch and
+              we&apos;ll start tracking {results.unscanned.length === 1 ? "it" : "them"} right away.
             </div>
           )}
 
           <div className="mt-4 space-y-6">
-            {live.results.map((facility) => (
+            {results.results.map((facility) => (
               <div key={facility.facilityId}>
                 <h2 className="text-sm font-medium">
                   {facility.parkName} · {facility.facilityName}
                   <span className="ml-2 font-normal text-muted-foreground">
-                    {facility.isStale && canRefresh
-                      ? "checking now…"
-                      : facility.lastScannedAt
-                        ? `checked ${timeAgo(facility.lastScannedAt)}`
-                        : "not scanned yet"}
+                    {facility.lastScannedAt ? `updated ${timeAgo(facility.lastScannedAt)}` : "not scanned yet"}
                   </span>
                 </h2>
                 {facility.openings.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {facility.isStale && canRefresh
-                      ? "Checking ReserveCalifornia…"
-                      : facility.lastScannedAt
-                        ? "Nothing open for this pattern right now."
-                        : "No data yet — a watch will start the first scan."}
+                    {facility.lastScannedAt
+                      ? "Nothing open for this pattern as of the last sweep."
+                      : "No data yet — a watch will start the first scan."}
                   </p>
                 ) : (
                   <ul className="mt-2 divide-y rounded-lg border">
@@ -276,57 +242,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
   );
 }
 
-interface RefreshProgress {
-  done: number;
-  total: number;
-  facilityName: string;
-}
 
-/**
- * Subscribe to the refresh happening behind this search. The loader's results
- * render first; each SSE frame carries a complete replacement snapshot, so the
- * page swaps state in rather than merging anything itself.
- */
-function useLiveRefresh(initial: SearchResults | null, canRefresh: boolean) {
-  const location = useLocation();
-  const [live, setLive] = useState(initial);
-  const [progress, setProgress] = useState<RefreshProgress | null>(null);
-
-  useEffect(() => {
-    setLive(initial);
-
-    if (!canRefresh || !initial || initial.staleCount === 0) {
-      setProgress(null);
-      return;
-    }
-    setProgress({ done: 0, total: initial.staleCount, facilityName: "" });
-
-    const source = new EventSource(`/api/search-progress${location.search}`);
-
-    source.onmessage = (message) => {
-      const event = JSON.parse(message.data) as SearchProgressEvent;
-      if (event.type === "progress") {
-        setLive(event.results);
-        setProgress({ done: event.done, total: event.total, facilityName: event.facilityName });
-        return;
-      }
-      if (event.type === "error") toast({ title: event.message, variant: "destructive" });
-      setProgress(null);
-      source.close();
-    };
-
-    // Fires on a dropped connection too; EventSource would otherwise reconnect
-    // and start the whole refresh over.
-    source.onerror = () => {
-      setProgress(null);
-      source.close();
-    };
-
-    return () => source.close();
-  }, [initial, location.search, canRefresh]);
-
-  return { live, progress };
-}
 
 function timeAgo(iso: string): string {
   const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
