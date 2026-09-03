@@ -52,6 +52,7 @@ model Facility {
   lastScannedAt   DateTime?
   watches         WatchFacility[]
   slots           AvailabilitySlot[]
+  events          AvailabilityEvent[]
 
   @@index([parkId])
   // The scanner picks work by "most overdue first", so it reads this ordering
@@ -108,4 +109,45 @@ model WatchFacility {
 
   @@id([watchId, facilityId])
   @@index([facilityId])
+}
+
+// What *changed*, as opposed to what *is*. AvailabilitySlot holds current state
+// and is overwritten every scan, so the moment a night flips is only observable
+// during that scan — overwrite the row and the information is gone for good.
+// This is the append-only record of those flips, and the only thing that can
+// answer "did something just open?".
+model AvailabilityEvent {
+  id         String                @id @default(cuid())
+  facilityId String
+  facility   Facility              @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  unitId     Int
+  unitName   String
+  // The night that changed availability.
+  date       DateTime              @db.Date
+  type       AvailabilityEventType
+  detectedAt DateTime              @default(now())
+  // Null until the notifier has acted on it. Makes this a durable outbox: if
+  // email is down, events simply stay unnotified and go out on the next pass.
+  notifiedAt DateTime?
+
+  @@index([facilityId, detectedAt])
+  // The notifier's query: unnotified opens, oldest first.
+  @@index([type, notifiedAt])
+}
+
+enum AvailabilityEventType {
+  opened
+  closed
+}
+
+// One row per batch of notification emails, for the emails-per-day metric.
+model EmailLog {
+  id       String   @id @default(cuid())
+  sentAt   DateTime @default(now())
+  // How many emails went out in this batch.
+  quantity Int
+  // { userId: [eventId, ...] } — who was told about what.
+  metadata Json
+
+  @@index([sentAt])
 }
