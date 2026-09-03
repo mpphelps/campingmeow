@@ -17,14 +17,17 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
     <div className="min-h-screen">
       <header className="border-b bg-card">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
-          <nav className="flex items-center gap-5">
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <Link to="/" className="group flex items-center gap-2">
               <img src="/favicon.svg" alt="" aria-hidden="true" className="size-7 rounded-md" />
               <span className="font-display text-lg leading-none font-semibold">
                 Camping<span className="text-poppy">Meow</span>
               </span>
             </Link>
-            <span className="hidden font-display text-sm italic text-muted-foreground sm:inline">
+            {/* Full-width on mobile so it drops to its own line under the brand
+                rather than being hidden — it's the joke, and phones are where
+                most people will see the header. */}
+            <span className="w-full font-display text-sm italic text-muted-foreground sm:w-auto">
               Let&apos;s go camping right meow.
             </span>
             {user && (
