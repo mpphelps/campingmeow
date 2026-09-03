@@ -68,7 +68,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">
         ← Parks
       </Link>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Check availability</h1>
+      <h1 className="mt-2 text-4xl font-semibold">Check availability</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
         Searching {facilities.length} campground{facilities.length === 1 ? "" : "s"} from our own records, refreshed by a nightly
         sweep of every park. Openings move fast and this is a snapshot, not live — set a watch and we&apos;ll email you the moment
@@ -193,7 +193,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           <div className="mt-4 space-y-6">
             {results.results.map((facility) => (
               <div key={facility.facilityId}>
-                <h2 className="text-sm font-medium">
+                <h2 className="text-base font-medium">
                   {facility.parkName} · {facility.facilityName}
                   <span className="ml-2 font-normal text-muted-foreground">
                     {facility.lastScannedAt ? `updated ${timeAgo(facility.lastScannedAt)}` : "not scanned yet"}
@@ -209,7 +209,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                   <List className="mt-2">
                     {facility.openings.map((opening) => (
                       <ListItem key={opening.checkin} className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
-                        <span className="font-medium tabular-nums">
+                        <span className="font-mono font-medium text-poppy tabular-nums">
                           {opening.dayLabel} {opening.checkin}
                         </span>
                         <span className="text-muted-foreground">

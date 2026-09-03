@@ -291,3 +291,24 @@ test.describe("home page selection limits", () => {
     await expect(page.getByLabel("Select Camp 20")).toHaveAttribute("aria-checked", "false");
   });
 });
+
+// ReserveCalifornia returns city casing inconsistently ("BORREGO SPRINGS" next to
+// "Carpinteria"). The service normalises it so rows don't look like they're set in
+// two different faces — uppercase mono reads very differently from lowercase.
+test.describe("city formatting", () => {
+  test("normalises inconsistent city casing from the source data", async ({ page }) => {
+    // Parks with no active campgrounds are excluded from the browse list.
+    const shouty = await createPark({ name: "Shouty Park", city: "BORREGO SPRINGS" });
+    const polite = await createPark({ name: "Polite Park", city: "Carpinteria" });
+    await createFacility({ name: "Shouty Camp", parkId: shouty.id });
+    await createFacility({ name: "Polite Camp", parkId: polite.id });
+
+    await page.goto("/");
+
+    // Regex, not a string: getByText(string) matches case-INsensitively, so a
+    // string assertion here would pass against the very casing it's meant to catch.
+    await expect(page.getByText(/Borrego Springs/)).toBeVisible();
+    await expect(page.getByText(/BORREGO SPRINGS/)).toHaveCount(0);
+    await expect(page.getByText(/Carpinteria/)).toBeVisible();
+  });
+});
