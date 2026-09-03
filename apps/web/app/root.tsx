@@ -2,6 +2,7 @@ import { Link, Links, Meta, Outlet, Scripts, ScrollRestoration, isRouteErrorResp
 
 import type { Route } from "./+types/root";
 import { RouteErrorPanel } from "~/components/layout/route-error-panel";
+import { notificationService } from "~/services/notification.service.server";
 import { scannerService } from "~/services/scanner.service.server";
 import "./app.css";
 
@@ -12,6 +13,7 @@ import "./app.css";
  */
 export async function loader() {
   scannerService.start();
+  notificationService.start();
   return null;
 }
 
