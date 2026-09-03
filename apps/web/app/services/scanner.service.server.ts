@@ -1,4 +1,5 @@
 import { logger } from "~/lib/logger.server";
+import { availabilityRepository } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { availabilityService } from "./availability.service.server";
 
@@ -31,6 +32,8 @@ const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const IDLE_SLEEP_MS = 30_000;
 /** After a failure, pause before the next pick so we don't spin on a bad row. */
 const ERROR_SLEEP_MS = 60_000;
+/** How often to drop slots for nights that have already passed. */
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export interface ScannerStatus {
   running: boolean;
@@ -48,6 +51,7 @@ export interface ScannerStatus {
 
 let started = false;
 let current: string | null = null;
+let lastPruneAt = 0;
 /** Resolves the idle sleep early when new work appears. */
 let wake: (() => void) | null = null;
 
@@ -124,6 +128,8 @@ async function loop(): Promise<void> {
   // one bad campground can never stop the scanner.
   for (;;) {
     try {
+      await pruneIfDue();
+
       const facility = await pickNext();
       if (!facility) {
         await sleep(IDLE_SLEEP_MS);
@@ -142,6 +148,22 @@ async function loop(): Promise<void> {
       current = null;
     }
   }
+}
+
+/**
+ * Drop slots for nights that have already passed. `replaceWindow` only rewrites
+ * today onward, so past dates orphan at roughly 25k rows/day across the
+ * catalog. Done here rather than per scan because 500 no-op DELETEs a day is
+ * waste; trend data lives in AvailabilityEvent, so this is not a loss.
+ */
+async function pruneIfDue(): Promise<void> {
+  if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = Date.now();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const deleted = await availabilityRepository.deleteSlotsBefore(today);
+  if (deleted > 0) logger.info({ action: "scanner.pruned", deleted }, "pruned past availability slots");
 }
 
 function sleep(ms: number): Promise<void> {

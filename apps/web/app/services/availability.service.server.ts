@@ -11,7 +11,11 @@ import {
 import { ValidationError } from "~/lib/errors";
 import { MAX_SEARCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
-import { availabilityRepository } from "../repositories/availability.repository.server";
+import {
+  availabilityRepository,
+  type EventInput,
+  type SlotInput,
+} from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 
 // Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
@@ -64,6 +68,10 @@ export interface ScanSummary {
   sites: number;
   slots: number;
   freeSlots: number;
+  /** Nights that flipped booked -> free on this scan. The notifier's input. */
+  opened: number;
+  /** Nights that flipped free -> booked. Kept so a re-open is a fresh event. */
+  closed: number;
 }
 
 // Domain service for campsite availability.
@@ -272,7 +280,14 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     })),
   );
 
-  await availabilityRepository.replaceWindow(facility.id, toDate(start), toDate(end), slots);
+  // The "before" picture. Read outside the transaction deliberately: only
+  // another scan of this same facility could change it, and scanFacility's
+  // in-flight map already guarantees there isn't one. The write below is still
+  // atomic, which is what actually matters.
+  const previous = await availabilityRepository.listWindow(facility.id, toDate(start), toDate(end));
+  const events = diffEvents(previous, slots);
+
+  await availabilityRepository.replaceWindow(facility.id, toDate(start), toDate(end), slots, events);
 
   const summary: ScanSummary = {
     facilityId: facility.id,
@@ -280,9 +295,43 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     sites: availability.sites.length,
     slots: slots.length,
     freeSlots: slots.filter((s) => s.isFree).length,
+    opened: events.filter((e) => e.type === "opened").length,
+    closed: events.filter((e) => e.type === "closed").length,
   };
   logger.info({ action: "scan.facility.complete", ...summary }, "facility scan complete");
   return summary;
+}
+
+/**
+ * Compare what we stored last scan against what ReserveCalifornia just told
+ * us, and return the transitions.
+ *
+ * The rule that matters: **a night with no previous row produces no event.**
+ * Going from "we had no data" to "40 nights free" is discovery, not 40 things
+ * opening — that happens on a campground's first scan, when a new site appears
+ * in the grid, and every day as a fresh date rolls into the booking window.
+ * Treat those as opens and a new watch fires dozens of emails immediately.
+ */
+function diffEvents(previous: { unitId: number; date: Date; isFree: boolean }[], next: SlotInput[]): EventInput[] {
+  const before = new Map<string, boolean>();
+  for (const slot of previous) before.set(slotKey(slot.unitId, slot.date), slot.isFree);
+
+  const events: EventInput[] = [];
+  for (const slot of next) {
+    const was = before.get(slotKey(slot.unitId, slot.date));
+    if (was === undefined || was === slot.isFree) continue;
+    events.push({
+      unitId: slot.unitId,
+      unitName: slot.unitName,
+      date: slot.date,
+      type: slot.isFree ? "opened" : "closed",
+    });
+  }
+  return events;
+}
+
+function slotKey(unitId: number, date: Date): string {
+  return `${unitId}:${date.toISOString().slice(0, 10)}`;
 }
 
 function toDate(iso: ISODate): Date {
