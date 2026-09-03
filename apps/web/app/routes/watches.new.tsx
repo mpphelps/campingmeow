@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Form, Link, redirect } from "react-router";
 
 import { Button } from "@campingmeow/ui/components/button";
+import { Card } from "@campingmeow/ui/components/card";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
+import { Label } from "@campingmeow/ui/components/label";
 import type { Route } from "./+types/watches.new";
 import { ValidationError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
@@ -88,7 +90,7 @@ function FacilityPicker({
         className="mt-2 max-w-sm"
         aria-label="Filter campgrounds"
       />
-      <div className="mt-2 max-h-64 space-y-1 overflow-y-auto rounded-lg border p-3">
+      <Card className="mt-2 max-h-64 space-y-1 overflow-y-auto p-3">
         {visible.length === 0 ? (
           <p className="text-sm text-muted-foreground">No campgrounds match.</p>
         ) : (
@@ -101,14 +103,14 @@ function FacilityPicker({
                 defaultChecked={preselectedIds.includes(facility.id)}
                 aria-label={`${facility.parkName} · ${facility.name}`}
               />
-              <label htmlFor={`pick-${facility.id}`} className="text-sm">
+              <Label htmlFor={`pick-${facility.id}`}>
                 <span className="text-muted-foreground">{facility.parkName} · </span>
                 {facility.name}
-              </label>
+              </Label>
             </div>
           ))
         )}
-      </div>
+      </Card>
       {error && <p className="mt-1 text-sm text-destructive">{error}</p>}
     </fieldset>
   );
@@ -143,9 +145,7 @@ export default function NewWatch({ loaderData, actionData }: Route.ComponentProp
                   defaultChecked={day.value === 5 || day.value === 6}
                   aria-label={day.label}
                 />
-                <label htmlFor={`day-${day.value}`} className="text-sm">
-                  {day.label}
-                </label>
+                <Label htmlFor={`day-${day.value}`}>{day.label}</Label>
               </div>
             ))}
           </div>
@@ -153,9 +153,7 @@ export default function NewWatch({ loaderData, actionData }: Route.ComponentProp
         </fieldset>
 
         <div>
-          <label htmlFor="nights" className="text-sm font-medium">
-            Nights
-          </label>
+          <Label htmlFor="nights">Nights</Label>
           <Input id="nights" name="nights" type="number" min={1} max={7} defaultValue={1} className="mt-2 w-24" />
           {fields?.nights && <p className="mt-1 text-sm text-destructive">{fields.nights}</p>}
         </div>

@@ -1,8 +1,11 @@
 import { useEffect } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 
+import { Alert } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@campingmeow/ui/components/card";
+import { Separator } from "@campingmeow/ui/components/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@campingmeow/ui/components/table";
 import type { Route } from "./+types/admin";
 import { ForbiddenError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
@@ -94,10 +97,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             </p>
 
             {dashboard.rateLimit.blocked && (
-              <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <Alert variant="destructive" className="mb-3">
                 ReserveCalifornia has rate-limited us. Scanning is paused until{" "}
                 {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
-              </div>
+              </Alert>
             )}
 
             <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -127,7 +130,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               A rising overdue count or an oldest scan past its target means we are not keeping up.
             </p>
 
-            <dl className="mt-4 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
+            <Separator className="mt-4" />
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <dt className="text-muted-foreground">Notifier</dt>
                 <dd className="font-medium">{notifier.running ? "Running (every 10 min)" : "Stopped"}</dd>
@@ -143,37 +147,35 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             </dl>
 
             {notifier.sender.startsWith("stub") && (
-              <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+              <Alert variant="warning" className="mt-3">
                 No email provider configured — openings are matched but nothing is sent. Set <code>RESEND_API_KEY</code>.
-              </div>
+              </Alert>
             )}
           </CardContent>
         </Card>
       </div>
 
       <h2 className="mt-8 text-sm font-medium">Users</h2>
-      <div className="mt-3 overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="p-3 font-medium">Email</th>
-              <th className="p-3 font-medium">Name</th>
-              <th className="p-3 font-medium">Watches</th>
-              <th className="p-3 font-medium">Joined</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {dashboard.users.map((user) => (
-              <tr key={user.id}>
-                <td className="p-3">{user.email}</td>
-                <td className="p-3">{user.name}</td>
-                <td className="p-3 tabular-nums">{user.watchCount}</td>
-                <td className="p-3 tabular-nums">{user.joined}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table className="mt-3">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Email</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead>Watches</TableHead>
+            <TableHead>Joined</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {dashboard.users.map((user) => (
+            <TableRow key={user.id}>
+              <TableCell>{user.email}</TableCell>
+              <TableCell>{user.name}</TableCell>
+              <TableCell className="tabular-nums">{user.watchCount}</TableCell>
+              <TableCell className="tabular-nums">{user.joined}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
