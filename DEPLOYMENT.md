@@ -67,7 +67,7 @@ Setup order (zero → running production):
 
 1. [Cloudflare Tunnel](#cloudflare-tunnel-shared-with-bookshelf) — add campingmeow.com to the existing tunnel
 2. [GitHub Actions self-hosted runner](#github-actions-self-hosted-runner) — second runner on the Pi
-3. [Secret management](#secret-management) — add the 7 secrets to GitHub
+3. [Secret management](#secret-management) — add the 8 secrets to GitHub
 4. Auth0 — add production callback/logout URLs to the CampingMeow application
 5. [CI/CD workflows](#cicd-workflows) — trigger CD, watch first deploy
 6. [Nightly Postgres backups](#nightly-postgres-backups) — turn on backups + restore drill
@@ -122,27 +122,9 @@ curl -I https://campingmeow.com
 - **404** — hostname reached the tunnel but matched no ingress rule: wrong config file edited, or cloudflared not restarted. Test with `cloudflared tunnel ingress rule https://campingmeow.com --config /etc/cloudflared/config.yml`
 - **200** — after the first deploy, this is the steady state
 
-### Server-sent events through the tunnel
-
-`/api/search-progress` streams progress while a search re-scans stale campgrounds. It only
-works if nothing between the app and the browser buffers the response — a buffering proxy
-holds every event until the stream ends, so the page sits still for the whole refresh and
-then jumps to the final answer. It looks like "SSE is broken in prod" but nothing errors.
-
-The app sets `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, and
-`X-Accel-Buffering: no`, which cloudflared and Cloudflare both honour. If a reverse proxy is
-ever put in front (nginx), it also needs `proxy_buffering off;` on that location.
-
-Verify after a deploy — events should trickle in over ~7s each, not arrive all at once:
-
-```bash
-curl -N "https://campingmeow.com/api/search-progress?facilities=<id>&days=5&nights=2&bounds=anytime"
-```
-
 ### Troubleshooting
 
 - **Bookshelf broke after editing config** — YAML indent error. Run `cloudflared tunnel ingress validate --config /etc/cloudflared/config.yml`.
-- **Search progress bar never moves, then results appear at the end** — something is buffering the SSE stream; see above.
 - **Auth0 "Callback URL mismatch"** — the allowed list and the `AUTH0_CALLBACK_URL` secret must both be exactly `https://campingmeow.com/auth/callback` (not `www.`, not `http://`).
 - **Infinite redirect loop after login** — session cookie is `Secure`-only in prod but the request reached the app over plain HTTP. Access via the tunnel domain, not `http://<pi-ip>:3001`.
 
@@ -215,6 +197,7 @@ Production secrets live only in GitHub Actions repository secrets. CD materializ
 | `AUTH0_CLIENT_SECRET` | Auth0 CampingMeow app client secret |
 | `AUTH0_AUDIENCE` | `https://campingmeow-api` |
 | `AUTH0_CALLBACK_URL` | `https://campingmeow.com/auth/callback` |
+| `RESEND_API_KEY` | Resend sending key. **Without it the app still runs and still matches openings — it just never sends.** The admin panel says "Email via: stub" and the app logs a warning at startup. |
 
 Non-secret constants (`POSTGRES_USER=campingmeow`, `POSTGRES_DB=campingmeow`) are hardcoded in `cd.yml`; `DATABASE_URL` is derived there from `POSTGRES_PASSWORD` so the two can't drift.
 

@@ -41,7 +41,7 @@ test.describe("home parks browser", () => {
 
     await expect(page.getByText("1 park")).toBeVisible();
     await expect(page.getByText("Active Park")).toBeVisible();
-    await expect(page.getByText("Retired Park")).not.toBeVisible();
+    await expect(page.getByText("Retired Park")).toHaveCount(0);
   });
 
   test("excludes parks with no active campgrounds", async ({ page }) => {
@@ -57,8 +57,8 @@ test.describe("home parks browser", () => {
 
     await expect(page.getByText("1 park")).toBeVisible();
     await expect(page.getByText("Sequoia", { exact: true })).toBeVisible();
-    await expect(page.getByText("Empty Park")).not.toBeVisible();
-    await expect(page.getByText("All Retired Park")).not.toBeVisible();
+    await expect(page.getByText("Empty Park")).toHaveCount(0);
+    await expect(page.getByText("All Retired Park")).toHaveCount(0);
   });
 
   test("filters parks by name as you type (client-side, no navigation)", async ({ page }) => {
@@ -74,7 +74,7 @@ test.describe("home parks browser", () => {
     await expect(page).toHaveURL(/\/$/);
     // exact:true avoids matching the city span too — city "Yosemite Village" contains "Yosemite".
     await expect(page.getByText("Yosemite", { exact: true })).toBeVisible();
-    await expect(page.getByText("Anza-Borrego")).not.toBeVisible();
+    await expect(page.getByText("Anza-Borrego")).toHaveCount(0);
   });
 
   test("?q= seeds the search input's initial value and filters on load, case-insensitively", async ({ page }) => {
@@ -86,7 +86,7 @@ test.describe("home parks browser", () => {
     await page.goto("/?q=BORREGO");
 
     await expect(page.getByText("Anza-Borrego")).toBeVisible();
-    await expect(page.getByText("Yosemite", { exact: false })).not.toBeVisible();
+    await expect(page.getByText("Yosemite", { exact: false })).toHaveCount(0);
   });
 
   test("shows a no-match message when the search has no hits", async ({ page }) => {
@@ -226,7 +226,7 @@ test.describe("park detail", () => {
     await expect(page.getByRole("heading", { name: "Yosemite" })).toBeVisible();
     await expect(page.getByText("Yosemite Village, CA")).toBeVisible();
     await expect(page.getByText("Upper Pines")).toBeVisible();
-    await expect(page.getByText("Retired Campground")).not.toBeVisible();
+    await expect(page.getByText("Retired Campground")).toHaveCount(0);
   });
 
   test("returns 404 for an unknown park id", async ({ page }) => {

@@ -41,6 +41,20 @@ export const watchRepository = {
     return prisma.watch.count({ where: { active: true } });
   },
 
+  /**
+   * Active watches covering any of these campgrounds, with the owner's email —
+   * everything the notifier needs to decide who to tell.
+   */
+  async listActiveByFacilityIds(facilityIds: string[]) {
+    return prisma.watch.findMany({
+      where: { active: true, facilities: { some: { facilityId: { in: facilityIds } } } },
+      include: {
+        user: { select: { id: true, email: true, firstName: true } },
+        facilities: { include: { facility: { include: { park: true } } } },
+      },
+    });
+  },
+
   async listWatchedFacilityIds() {
     const rows = await prisma.watchFacility.findMany({
       where: { watch: { active: true } },

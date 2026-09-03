@@ -1,5 +1,6 @@
 import { authService, type AuthUser } from "./auth.service.server";
 import { availabilityService } from "./availability.service.server";
+import { notificationService, type NotifierStatus } from "./notification.service.server";
 import { scannerService, type ScannerStatus } from "./scanner.service.server";
 import { userRepository } from "../repositories/user.repository.server";
 import { parkRepository } from "../repositories/park.repository.server";
@@ -17,6 +18,7 @@ export interface AdminDashboard {
     watchedFacilityCount: number;
   };
   scanner: ScannerStatus;
+  notifier: NotifierStatus;
   /** Set while ReserveCalifornia has us blocked; nothing will scan until it clears. */
   rateLimit: { blocked: boolean; until: string | null };
   /** ReserveCalifornia requests waiting at the global rate gate. */
@@ -40,7 +42,7 @@ export const adminService = {
 async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
   authService.requirePermission(user, ADMIN_PERMISSION);
 
-  const [userCount, parkCount, facilityCount, watchCount, watchedFacilityIds, users, scanner] = await Promise.all([
+  const [userCount, parkCount, facilityCount, watchCount, watchedFacilityIds, users, scanner, notifier] = await Promise.all([
     userRepository.count(),
     parkRepository.countActive(),
     facilityRepository.countActive(),
@@ -48,6 +50,7 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
     watchRepository.listWatchedFacilityIds(),
     userRepository.listAllWithWatchCounts(),
     scannerService.getStatus(),
+    notificationService.getStatus(),
   ]);
 
   return {
@@ -59,6 +62,7 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       watchedFacilityCount: watchedFacilityIds.length,
     },
     scanner,
+    notifier,
     rateLimit: availabilityService.getRateLimitState(),
     queueDepth: availabilityService.getQueueDepth(),
     users: users.map((u) => ({

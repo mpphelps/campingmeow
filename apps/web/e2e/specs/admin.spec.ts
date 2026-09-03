@@ -44,7 +44,10 @@ test.describe("admin dashboard", () => {
 
     // The scanner runs itself; the panel reports health rather than offering buttons.
     await expect(page.getByText("Scanner", { exact: true })).toBeVisible();
-    await expect(page.getByText("Stopped")).toBeVisible(); // DISABLE_SCANNER=1 in tests
+    // Both the scanner and the notifier render "Stopped" in tests, so scope the
+    // assertion to the Status field rather than matching bare text twice.
+    const statusValue = page.locator("dt", { hasText: /^Status$/ }).locator("xpath=following-sibling::dd[1]");
+    await expect(statusValue).toHaveText("Stopped"); // DISABLE_SCANNER=1 in tests
     // One active campground, never scanned, so it is overdue on both counts.
     await expect(page.getByText("1 watched · 1 catalog")).toBeVisible();
     await expect(page.getByText("never")).toHaveCount(2);

@@ -27,6 +27,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const sync = useFetcher<CatalogSyncResult>();
   const syncing = sync.state !== "idle";
   const scanner = dashboard.scanner;
+  const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
   const revalidator = useRevalidator();
@@ -43,13 +44,14 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
     { label: "Requests queued", value: dashboard.queueDepth },
     { label: "Scanned / hr", value: scanner.scannedLastHour },
+    { label: "Emails today", value: notifier.emailsSentToday },
   ];
 
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-7">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-8">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -124,6 +126,27 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <p className="mt-3 text-xs text-muted-foreground">
               A rising overdue count or an oldest scan past its target means we are not keeping up.
             </p>
+
+            <dl className="mt-4 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
+              <div>
+                <dt className="text-muted-foreground">Notifier</dt>
+                <dd className="font-medium">{notifier.running ? "Running (every 10 min)" : "Stopped"}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Email via</dt>
+                <dd className="font-medium">{notifier.sender}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Openings awaiting email</dt>
+                <dd className="font-medium tabular-nums">{notifier.pendingEvents}</dd>
+              </div>
+            </dl>
+
+            {notifier.sender.startsWith("stub") && (
+              <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                No email provider configured — openings are matched but nothing is sent. Set <code>RESEND_API_KEY</code>.
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -104,7 +104,9 @@ test.describe("watches", () => {
     await page.getByRole("button", { name: "Delete" }).click();
 
     await expect(page.getByText("No watches yet.")).toBeVisible();
-    await expect(page.getByText("Sequoia Loop")).not.toBeVisible();
+    // toHaveCount(0) asserts the row is gone. not.toBeVisible() passes for an
+    // element that is merely off-screen or mid-rerender, which made this flake.
+    await expect(page.getByText("Sequoia Loop")).toHaveCount(0);
   });
 });
 

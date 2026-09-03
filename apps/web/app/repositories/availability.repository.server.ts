@@ -81,6 +81,33 @@ export const availabilityRepository = {
     });
   },
 
+  /**
+   * The notifier's outbox read: openings nobody has been told about yet,
+   * oldest first. Bounded so one pass can't try to email the world.
+   */
+  async listUnnotifiedOpenings(limit: number) {
+    return prisma.availabilityEvent.findMany({
+      where: { type: "opened", notifiedAt: null },
+      orderBy: { detectedAt: "asc" },
+      take: limit,
+      select: { id: true, facilityId: true, unitId: true, unitName: true, date: true },
+    });
+  },
+
+  /**
+   * Mark events handled. Called for *every* claimed event, matched or not —
+   * an unmatched opening is still processed, and leaving it would make the
+   * notifier re-examine it forever.
+   */
+  async markNotified(eventIds: string[]) {
+    if (eventIds.length === 0) return 0;
+    const { count } = await prisma.availabilityEvent.updateMany({
+      where: { id: { in: eventIds } },
+      data: { notifiedAt: new Date() },
+    });
+    return count;
+  },
+
   async countByFacility(facilityIds: string[]) {
     return prisma.availabilitySlot.groupBy({
       by: ["facilityId"],

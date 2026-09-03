@@ -14,8 +14,11 @@ export const test = base.extend<AppOptions & AppFixtures>({
 
   cleanDb: [
     async ({}, use) => {
+      // Every table a test can write. AvailabilityEvent would be reached by
+      // CASCADE from Facility, but EmailLog has no foreign key at all — leave
+      // it out and email counts leak from one test into the next.
       await prisma.$executeRawUnsafe(
-        'TRUNCATE "User", "Park", "Facility", "Watch", "WatchFacility", "AvailabilitySlot" CASCADE',
+        'TRUNCATE "User", "Park", "Facility", "Watch", "WatchFacility", "AvailabilitySlot", "AvailabilityEvent", "EmailLog" CASCADE',
       );
       await use();
     },
