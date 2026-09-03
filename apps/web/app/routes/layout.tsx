@@ -15,12 +15,18 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <header className="border-b bg-card">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
           <nav className="flex items-center gap-5">
-            <Link to="/" className="text-sm font-semibold">
-              Camping Meow
+            <Link to="/" className="group flex items-center gap-2">
+              <img src="/favicon.svg" alt="" aria-hidden="true" className="size-7 rounded-md" />
+              <span className="font-display text-lg leading-none font-semibold">
+                Camping<span className="text-poppy">Meow</span>
+              </span>
             </Link>
+            <span className="hidden font-display text-sm italic text-muted-foreground sm:inline">
+              Let&apos;s go camping right meow.
+            </span>
             {user && (
               <NavLink
                 to="/watches"

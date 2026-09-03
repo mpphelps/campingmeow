@@ -11,6 +11,7 @@ import { Label } from "@campingmeow/ui/components/label";
 import { Select } from "@campingmeow/ui/components/select";
 import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/home";
+import { ParkBanner } from "~/components/park-banner";
 import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
@@ -82,10 +83,15 @@ function ParkRow({
         />
         <AccordionTrigger>
           <span className="font-medium">{park.name}</span>
-          <span className="ml-auto shrink-0 font-normal text-muted-foreground">
-            {park.distance !== null ? `${Math.round(park.distance)} mi · ` : park.city ? `${park.city} · ` : ""}
+          <span className="ml-auto shrink-0 font-mono text-xs font-normal tracking-tight text-muted-foreground">
+            {/* Distance is extra information, not a replacement — searching by
+                location shouldn't cost you the city you were reading. */}
+            {park.distance !== null && <span className="text-foreground">{Math.round(park.distance)} mi · </span>}
+            {park.city ? `${park.city} · ` : ""}
             {park.facilities.length} campground{park.facilities.length === 1 ? "" : "s"}
-            {selectedCount > 0 ? ` · ${selectedCount} selected` : ""}
+            {selectedCount > 0 ? (
+              <span className="text-poppy"> · {selectedCount} selected</span>
+            ) : null}
           </span>
         </AccordionTrigger>
         {/* Sits outside the trigger: a link nested in a button is invalid HTML. */}
@@ -261,11 +267,19 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Find open California campsites</h1>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-        Pick the parks or campgrounds you want, then search what&apos;s open right now — or set up a watch and we&apos;ll email you
-        the moment ReserveCalifornia has a matching opening.
-      </p>
+      <div className="-mt-6 mb-8 overflow-hidden rounded-xl border sm:-mt-8">
+        <ParkBanner className="block h-36 w-full sm:h-48" />
+        {/* Caption block, like the print series: solid field, title in cream. */}
+        <div className="bg-[#1E3A2B] px-5 py-5 sm:px-7 sm:py-6">
+          <h1 className="text-3xl leading-tight font-semibold text-[#F2E4CC] sm:text-[2.75rem]">
+            Find open California campsites
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-[#F2E4CC]/70">
+            Pick the parks or campgrounds you want, then search what&apos;s open right now — or set up a watch and we&apos;ll
+            email you the moment ReserveCalifornia has a matching opening.
+          </p>
+        </div>
+      </div>
 
       <div className="mt-6 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -342,7 +356,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <p className="mt-6 text-xs text-muted-foreground">
             {visible.length} park{visible.length === 1 ? "" : "s"} · check a park to select all of it, or expand to pick campgrounds
           </p>
-          <Accordion type="multiple" className="mt-2 rounded-lg border">
+          <Accordion type="multiple" className="mt-2 overflow-hidden rounded-lg border bg-card">
             {visible.map((park) => (
               <ParkRow key={park.id} park={park} selected={selected} onToggleFacility={toggleFacility} onTogglePark={togglePark} />
             ))}

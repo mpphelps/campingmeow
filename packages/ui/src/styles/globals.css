@@ -3,6 +3,34 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Self-hosted (apps/web/public/fonts) so the CSP stays font-src 'self' and we
+   don't hand Google a request on every page load. Latin subsets only. */
+@font-face {
+  font-family: "Fraunces";
+  src: url("/fonts/fraunces.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Karla";
+  src: url("/fonts/karla.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "DM Mono";
+  src: url("/fonts/dm-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "DM Mono";
+  src: url("/fonts/dm-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -28,6 +56,12 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-poppy: var(--poppy);
+  --color-poppy-foreground: var(--poppy-foreground);
+
+  --font-sans: "Karla", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -36,59 +70,68 @@
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.5rem;
 
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  /* WPA park-poster palette: parchment ground, ranger green, California poppy.
+     Poppy is deliberately NOT --accent (which shadcn uses for hover surfaces).
+     It is reserved for availability, so an open site is the only warm thing on
+     the page and reads before you've processed any text. */
+  --background: oklch(0.963 0.013 88);
+  --foreground: oklch(0.22 0.018 145);
+  --card: oklch(0.988 0.007 88);
+  --card-foreground: oklch(0.22 0.018 145);
+  --popover: oklch(0.988 0.007 88);
+  --popover-foreground: oklch(0.22 0.018 145);
+  --primary: oklch(0.385 0.105 156);
+  --primary-foreground: oklch(0.98 0.012 85);
+  --secondary: oklch(0.935 0.012 100);
+  --secondary-foreground: oklch(0.28 0.03 155);
+  --muted: oklch(0.945 0.010 100);
+  --muted-foreground: oklch(0.495 0.022 130);
+  --accent: oklch(0.925 0.016 110);
+  --accent-foreground: oklch(0.26 0.03 155);
+  --destructive: oklch(0.545 0.185 28);
+  --destructive-foreground: oklch(0.98 0.012 85);
+  --border: oklch(0.872 0.016 105);
+  --input: oklch(0.872 0.016 105);
+  --ring: oklch(0.385 0.105 156);
+  --poppy: oklch(0.655 0.168 45);
+  --poppy-foreground: oklch(0.99 0.015 60);
+  --chart-1: oklch(0.385 0.105 156);
+  --chart-2: oklch(0.655 0.168 45);
+  --chart-3: oklch(0.55 0.075 220);
+  --chart-4: oklch(0.72 0.13 85);
+  --chart-5: oklch(0.48 0.06 300);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  /* Deep pine rather than black — the parchment theme's night shift. */
+  --background: oklch(0.185 0.018 160);
+  --foreground: oklch(0.945 0.012 85);
+  --card: oklch(0.235 0.020 160);
+  --card-foreground: oklch(0.945 0.012 85);
+  --popover: oklch(0.235 0.020 160);
+  --popover-foreground: oklch(0.945 0.012 85);
+  --primary: oklch(0.735 0.115 152);
+  --primary-foreground: oklch(0.17 0.02 160);
+  --secondary: oklch(0.285 0.022 158);
+  --secondary-foreground: oklch(0.945 0.012 85);
+  --muted: oklch(0.275 0.020 158);
+  --muted-foreground: oklch(0.715 0.020 120);
+  --accent: oklch(0.305 0.024 158);
+  --accent-foreground: oklch(0.945 0.012 85);
+  --destructive: oklch(0.65 0.17 27);
+  --destructive-foreground: oklch(0.98 0.012 85);
+  --border: oklch(0.99 0.01 85 / 12%);
+  --input: oklch(0.99 0.01 85 / 16%);
+  --ring: oklch(0.735 0.115 152);
+  --poppy: oklch(0.735 0.155 50);
+  --poppy-foreground: oklch(0.18 0.02 45);
+  --chart-1: oklch(0.735 0.115 152);
+  --chart-2: oklch(0.735 0.155 50);
+  --chart-3: oklch(0.68 0.09 220);
+  --chart-4: oklch(0.79 0.12 85);
+  --chart-5: oklch(0.66 0.09 300);
 }
 
 @layer base {
@@ -100,6 +143,24 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Only page titles get the display face. Deliberately NOT a h1,h2,h3 rule:
+     Radix renders an <h3> for every accordion header, so an element selector
+     puts a 14px serif on all 299 park rows. Everything else opts in with the
+     `font-display` utility. WONK gives Fraunces its flared, slightly irregular
+     terminals — printed signage rather than a default serif. */
+  h1,
+  .font-display {
+    font-family: var(--font-display);
+    font-variation-settings: "opsz" 96, "SOFT" 20, "WONK" 1;
+    letter-spacing: -0.015em;
+  }
+
+  code {
+    font-family: var(--font-mono);
   }
 }

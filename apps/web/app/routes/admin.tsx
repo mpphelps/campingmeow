@@ -52,13 +52,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
+      <h1 className="text-4xl font-semibold">Admin</h1>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-8">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
-              <div className="text-2xl font-semibold tabular-nums">{stat.value}</div>
+              <div className="font-mono text-2xl font-semibold tabular-nums">{stat.value}</div>
               <div className="mt-1 text-xs text-muted-foreground">{stat.label}</div>
             </CardContent>
           </Card>

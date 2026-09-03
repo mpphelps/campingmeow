@@ -51,6 +51,19 @@ export interface ParkBrowseItem {
 }
 
 // Domain service for the park/facility catalog.
+/**
+ * ReserveCalifornia is inconsistent about city casing — some come back
+ * "BORREGO SPRINGS", others "Carpinteria". Normalised here rather than at sync
+ * so we keep the source data untouched, and per the layering rule the service
+ * hands the UI something it can render as-is.
+ */
+function titleCaseCity(city: string | null): string | null {
+  if (!city) return null;
+  return city
+    .toLowerCase()
+    .replace(/(^|[\s\-'])([a-z])/g, (_, boundary: string, letter: string) => boundary + letter.toUpperCase());
+}
+
 export const catalogService = {
   sync,
   listParks,
@@ -70,7 +83,7 @@ async function listParksWithFacilities(): Promise<ParkBrowseItem[]> {
   return parks.map((park) => ({
     id: park.id,
     name: park.name,
-    city: park.city,
+    city: titleCaseCity(park.city),
     latitude: park.latitude,
     longitude: park.longitude,
     facilities: park.facilities.map((f) => ({ id: f.id, name: f.name })),
@@ -106,7 +119,7 @@ async function listParks(query: string | null): Promise<ParkListItem[]> {
   return parks.map((park) => ({
     id: park.id,
     name: park.name,
-    city: park.city,
+    city: titleCaseCity(park.city),
     facilityCount: park._count.facilities,
   }));
 }
@@ -119,7 +132,7 @@ async function getParkDetail(parkId: string): Promise<ParkDetail | null> {
   return {
     id: park.id,
     name: park.name,
-    city: park.city,
+    city: titleCaseCity(park.city),
     facilities: facilities.map((f) => ({ id: f.id, name: f.name })),
   };
 }
