@@ -7,6 +7,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@c
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
+import { Label } from "@campingmeow/ui/components/label";
 import { Select } from "@campingmeow/ui/components/select";
 import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/home";
@@ -120,9 +121,7 @@ function ParkRow({
               onCheckedChange={(checked) => onToggleFacility(facility.id, checked === true)}
               aria-label={`Select ${facility.name}`}
             />
-            <label htmlFor={`facility-${facility.id}`} className="text-sm">
-              {facility.name}
-            </label>
+            <Label htmlFor={`facility-${facility.id}`}>{facility.name}</Label>
           </div>
         ))}
         <Link to={`/parks/${park.id}`} className="mt-2 inline-block text-xs text-muted-foreground hover:text-foreground">

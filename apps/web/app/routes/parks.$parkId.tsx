@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { Button } from "@campingmeow/ui/components/button";
+import { List, ListItem } from "@campingmeow/ui/components/list";
 import type { Route } from "./+types/parks.$parkId";
 import { catalogService } from "~/services/catalog.service.server";
 
@@ -27,16 +28,16 @@ export default function ParkDetail({ loaderData }: Route.ComponentProps) {
       {park.facilities.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">No bookable campgrounds in this park.</p>
       ) : (
-        <ul className="mt-3 divide-y rounded-lg border">
+        <List className="mt-3">
           {park.facilities.map((facility) => (
-            <li key={facility.id} className="flex items-center justify-between gap-3 p-3 text-sm">
+            <ListItem key={facility.id} className="flex items-center justify-between ga  text-sm">
               {facility.name}
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/watches/new?facilityId=${facility.id}`}>Watch</Link>
               </Button>
-            </li>
+            </ListItem>
           ))}
-        </ul>
+        </List>
       )}
     </div>
   );

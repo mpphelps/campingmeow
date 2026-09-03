@@ -1,6 +1,7 @@
 import { Link, useFetcher } from "react-router";
 
 import { Button } from "@campingmeow/ui/components/button";
+import { List, ListItem } from "@campingmeow/ui/components/list";
 import type { Route } from "./+types/watches";
 import { ForbiddenError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
@@ -34,7 +35,9 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
   const deleting = fetcher.state !== "idle";
 
   return (
-    <li className={`flex flex-col gap-1 p-3 text-sm sm:flex-row sm:items-baseline sm:justify-between ${deleting ? "opacity-50" : ""}`}>
+    <ListItem
+      className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${deleting ? "opacity-50" : ""}`}
+    >
       <div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {watch.facilities.map((f) => (
@@ -58,7 +61,7 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
           Delete
         </Button>
       </fetcher.Form>
-    </li>
+    </ListItem>
   );
 }
 
@@ -78,11 +81,11 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
           watch.
         </p>
       ) : (
-        <ul className="mt-6 divide-y rounded-lg border">
+        <List className="mt-6">
           {watches.map((watch) => (
             <WatchRow key={watch.id} watch={watch} />
           ))}
-        </ul>
+        </List>
       )}
     </div>
   );

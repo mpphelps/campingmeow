@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { Form, Link, useNavigation } from "react-router";
 
+import { Alert } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
+import { Label } from "@campingmeow/ui/components/label";
+import { List, ListItem } from "@campingmeow/ui/components/list";
 import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
 import type { Route } from "./+types/search";
 import { ValidationError } from "~/lib/errors";
@@ -73,7 +76,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       </p>
 
       {fields?.facilityIds && (
-        <div className="mt-4 max-w-2xl rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+        <Alert variant="destructive" className="mt-4 max-w-2xl">
           {fields.facilityIds}{" "}
           <Link to="/" className="underline underline-offset-2">
             Change your selection
@@ -83,7 +86,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             watch them all instead
           </Link>
           .
-        </div>
+        </Alert>
       )}
 
       <Form method="get" className="mt-8 max-w-2xl space-y-6">
@@ -101,9 +104,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                   defaultChecked={criteria.checkinDays.includes(day.value)}
                   aria-label={day.label}
                 />
-                <label htmlFor={`day-${day.value}`} className="text-sm">
-                  {day.label}
-                </label>
+                <Label htmlFor={`day-${day.value}`}>{day.label}</Label>
               </div>
             ))}
           </div>
@@ -111,9 +112,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
         </fieldset>
 
         <div>
-          <label htmlFor="nights" className="text-sm font-medium">
+          <Label htmlFor="nights">
             Nights
-          </label>
+          </Label>
           <Input id="nights" name="nights" type="number" min={1} max={7} defaultValue={criteria.nights} className="mt-2 w-24" />
           {fields?.nights && <p className="mt-1 text-sm text-destructive">{fields.nights}</p>}
         </div>
@@ -123,31 +124,31 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           <RadioGroup name="bounds" value={bounds} onValueChange={(v) => setBounds(v as "anytime" | "range")} className="mt-2">
             <div className="flex items-center gap-2">
               <RadioGroupItem value="anytime" id="bounds-anytime" />
-              <label htmlFor="bounds-anytime" className="text-sm">
+              <Label htmlFor="bounds-anytime">
                 Anytime in the booking window{" "}
                 <span className="text-xs text-muted-foreground">(the full ~6 months ReserveCalifornia has open)</span>
-              </label>
+              </Label>
             </div>
             <div className="flex items-center gap-2">
               <RadioGroupItem value="range" id="bounds-range" />
-              <label htmlFor="bounds-range" className="text-sm">
+              <Label htmlFor="bounds-range">
                 Only between specific dates
-              </label>
+              </Label>
             </div>
           </RadioGroup>
           {bounds === "range" && (
             <div className="mt-3 flex gap-4">
               <div>
-                <label htmlFor="from" className="text-sm font-medium">
+                <Label htmlFor="from">
                   Earliest check-in
-                </label>
+                </Label>
                 <Input id="from" name="from" type="date" defaultValue={criteria.startDate ?? ""} className="mt-2" />
                 {fields?.startDate && <p className="mt-1 text-sm text-destructive">{fields.startDate}</p>}
               </div>
               <div>
-                <label htmlFor="to" className="text-sm font-medium">
+                <Label htmlFor="to">
                   Latest check-in
-                </label>
+                </Label>
                 <Input id="to" name="to" type="date" defaultValue={criteria.endDate ?? ""} className="mt-2" />
                 {fields?.endDate && <p className="mt-1 text-sm text-destructive">{fields.endDate}</p>}
               </div>
@@ -183,10 +184,10 @@ export default function Search({ loaderData }: Route.ComponentProps) {
           </p>
 
           {results.unscanned.length > 0 && (
-            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+            <Alert variant="warning" className="mt-3">
               We haven&apos;t scanned {results.unscanned.join(", ")} yet, so there&apos;s nothing to search. Create a watch and
               we&apos;ll start tracking {results.unscanned.length === 1 ? "it" : "them"} right away.
-            </div>
+            </Alert>
           )}
 
           <div className="mt-4 space-y-6">
@@ -205,9 +206,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                       : "No data yet — a watch will start the first scan."}
                   </p>
                 ) : (
-                  <ul className="mt-2 divide-y rounded-lg border">
+                  <List className="mt-2">
                     {facility.openings.map((opening) => (
-                      <li key={opening.checkin} className="flex flex-col gap-1 p-3 text-sm sm:flex-row sm:items-baseline sm:gap-3">
+                      <ListItem key={opening.checkin} className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
                         <span className="font-medium tabular-nums">
                           {opening.dayLabel} {opening.checkin}
                         </span>
@@ -216,15 +217,15 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                           {opening.siteNames.slice(0, 4).join(", ")}
                           {opening.siteNames.length > 4 ? `, +${opening.siteNames.length - 4} more` : ""}
                         </span>
-                      </li>
+                      </ListItem>
                     ))}
-                  </ul>
+                  </List>
                 )}
               </div>
             ))}
           </div>
 
-          <div className="mt-8 rounded-lg border p-4">
+          <Alert className="mt-8 p-4">
             <p className="text-sm">
               Book on{" "}
               <a href="https://www.reservecalifornia.com/" target="_blank" rel="noreferrer" className="underline underline-offset-2">
@@ -235,7 +236,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             <Button className="mt-3" asChild>
               <Link to={watchHref}>Create a watch</Link>
             </Button>
-          </div>
+          </Alert>
         </div>
       )}
     </div>
