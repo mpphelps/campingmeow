@@ -43,10 +43,13 @@ test.describe("watches", () => {
     await page.getByRole("button", { name: "Create watch" }).click();
 
     await expect(page).toHaveURL(/\/watches$/);
-    await expect(page.getByText("Sequoia", { exact: true })).toBeVisible();
-    await expect(page.getByText("Lodgepole")).toBeVisible();
-    await expect(page.getByText("Kings Canyon", { exact: true })).toBeVisible();
-    await expect(page.getByText("Sentinel")).toBeVisible();
+    // Scope to the watch list: the availability calendar's campground dropdown
+    // also lists "Park · Campground", so an unscoped text match is ambiguous.
+    const list = page.locator("[data-slot='list']");
+    await expect(list.getByText("Sequoia", { exact: true })).toBeVisible();
+    await expect(list.getByText("Lodgepole")).toBeVisible();
+    await expect(list.getByText("Kings Canyon", { exact: true })).toBeVisible();
+    await expect(list.getByText("Sentinel")).toBeVisible();
   });
 
   test("offers no date bounds — a watch always covers the whole window", async ({ page }) => {

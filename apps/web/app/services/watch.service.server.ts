@@ -18,6 +18,8 @@ export interface WatchListItem {
   facilities: WatchFacilityItem[];
   /** e.g. ["Fri", "Sat"] */
   dayLabels: string[];
+  /** 0=Sun .. 6=Sat — what the availability calendar matches against. */
+  checkinDays: number[];
   nights: number;
   active: boolean;
 }
@@ -129,6 +131,7 @@ function toListItem(watch: {
       }))
       .sort((a, b) => a.parkName.localeCompare(b.parkName) || a.facilityName.localeCompare(b.facilityName)),
     dayLabels: [...watch.checkinDays].sort().map((d) => DAY_LABELS[d]),
+    checkinDays: [...watch.checkinDays].sort(),
     nights: watch.nights,
     active: watch.active,
   };
