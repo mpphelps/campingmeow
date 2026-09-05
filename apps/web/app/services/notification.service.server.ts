@@ -4,6 +4,7 @@ import { logger } from "~/lib/logger.server";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { emailLogRepository } from "../repositories/email-log.repository.server";
 import { watchRepository } from "../repositories/watch.repository.server";
+import { preferenceService } from "./preference.service.server";
 
 /**
  * Turns "a night opened" into "you have mail".
@@ -32,6 +33,9 @@ export interface NotifierStatus {
   pendingEvents: number;
   emailsSentToday: number;
 }
+
+/** Where the unsubscribe link points. */
+const SITE_URL = process.env.SITE_URL ?? "https://campingmeow.com";
 
 /** One stay worth telling someone about. */
 interface Match {
@@ -120,7 +124,16 @@ async function runOnce(): Promise<{ events: number; emails: number }> {
   for (const [userId, userMatches] of byUser) {
     const email = userMatches[0]!.email;
     try {
-      await emailSender.send(buildEmail(userMatches));
+      // Watches keep running when email is off — the user just isn't told, and
+      // can still see openings in-app. So this skips the send, not the scan.
+      const prefs = await preferenceService.getForUser(userId);
+      if (!prefs.emailNotifications) {
+        logger.info({ action: "notifier.skipped_opted_out", userId }, "user has email notifications off");
+        continue;
+      }
+
+      const token = await preferenceService.getUnsubscribeToken(userId);
+      await emailSender.send(buildEmail(userMatches, token));
       sent++;
       notifiedByUser[userId] = [...new Set(userMatches.map((m) => m.eventId))];
       logger.info({ action: "notifier.sent", userId, openings: userMatches.length }, "opening email sent");
@@ -211,7 +224,8 @@ function stayIsFree(freeNights: Set<string>, facilityId: string, unitId: number,
   return true;
 }
 
-function buildEmail(matches: Match[]) {
+function buildEmail(matches: Match[], unsubscribeToken: string) {
+  const manageUrl = `${SITE_URL}/preferences?token=${encodeURIComponent(unsubscribeToken)}`;
   const lines = matches
     .sort((a, b) => a.checkin.localeCompare(b.checkin))
     .map(
@@ -233,8 +247,15 @@ function buildEmail(matches: Match[]) {
       "https://www.reservecalifornia.com/",
       "",
       "You're getting this because you set up a watch on CampingMeow.",
-      "https://campingmeow.com/watches",
+      `Turn these emails off: ${manageUrl}`,
     ].join("\n"),
+    headers: {
+      // RFC 8058. The POST variant is what lets Gmail's native Unsubscribe
+      // button act immediately — link prefetchers only ever issue GETs, so the
+      // in-body link above deliberately just opens the page.
+      "List-Unsubscribe": `<${manageUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
   };
 }
 

@@ -18,7 +18,7 @@ export const test = base.extend<AppOptions & AppFixtures>({
       // CASCADE from Facility, but EmailLog has no foreign key at all — leave
       // it out and email counts leak from one test into the next.
       await prisma.$executeRawUnsafe(
-        'TRUNCATE "User", "Park", "Facility", "Watch", "WatchFacility", "AvailabilitySlot", "AvailabilityEvent", "EmailLog" CASCADE',
+        'TRUNCATE "User", "Park", "Facility", "Watch", "WatchFacility", "AvailabilitySlot", "AvailabilityEvent", "EmailLog", "UserPreference" CASCADE',
       );
       await use();
     },

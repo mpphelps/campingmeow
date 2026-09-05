@@ -54,7 +54,15 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
           <div className="flex items-center gap-3">
             {user ? (
               <>
-                <span className="text-sm text-muted-foreground">Welcome, {user.firstName}</span>
+                <span className="hidden text-sm text-muted-foreground sm:inline">Welcome, {user.firstName}</span>
+                <NavLink
+                  to="/preferences"
+                  className={({ isActive }) =>
+                    `text-sm ${isActive ? "font-medium" : "text-muted-foreground hover:text-foreground"}`
+                  }
+                >
+                  Settings
+                </NavLink>
                 <Button variant="outline" size="sm" asChild>
                   <a href="/auth/logout">Log out</a>
                 </Button>
