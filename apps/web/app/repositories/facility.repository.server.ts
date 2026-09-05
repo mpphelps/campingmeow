@@ -23,6 +23,10 @@ export const facilityRepository = {
     return result.count;
   },
 
+  async findByIdWithPark(id: string) {
+    return prisma.facility.findUnique({ where: { id }, include: { park: true } });
+  },
+
   async findById(id: string) {
     return prisma.facility.findUnique({
       where: { id },

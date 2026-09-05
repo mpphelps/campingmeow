@@ -30,11 +30,18 @@ export default function ParkDetail({ loaderData }: Route.ComponentProps) {
       ) : (
         <List className="mt-3">
           {park.facilities.map((facility) => (
-            <ListItem key={facility.id} className="flex items-center justify-between ga  text-sm">
-              {facility.name}
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/watches/new?facilityId=${facility.id}`}>Watch</Link>
-              </Button>
+            <ListItem key={facility.id} className="flex items-center justify-between gap-3 text-sm">
+              <Link to={`/parks/${park.id}/${facility.id}`} className="min-w-0 font-medium hover:underline">
+                {facility.name}
+              </Link>
+              <div className="flex shrink-0 gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={`/parks/${park.id}/${facility.id}`}>Availability</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={`/watches/new?facilityId=${facility.id}`}>Watch</Link>
+                </Button>
+              </div>
             </ListItem>
           ))}
         </List>

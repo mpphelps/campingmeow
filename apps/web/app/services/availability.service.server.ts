@@ -80,6 +80,8 @@ export interface ScanSummary {
 //   Read path : answer searches from storage. Never calls ReserveCalifornia.
 export const availabilityService = {
   searchOpenings,
+  getFacilityCalendar,
+  getWatchCalendar,
   getRateLimitState,
   getQueueDepth,
   scanFacility,
@@ -142,6 +144,80 @@ type FacilityWithPark = Awaited<ReturnType<typeof loadFacilities>>[number];
 async function searchOpenings(input: SearchOpeningsInput): Promise<SearchResults> {
   const query = parseSearch(input);
   return buildResults(query, await loadFacilities(query));
+}
+
+export interface CalendarAvailability {
+  facilityId: string;
+  facilityName: string;
+  parkName: string;
+  /** yyyy-MM-dd nights to mark available. */
+  freeDates: ISODate[];
+  /** Null = never scanned, so the calendar means "unknown", not "nothing free". */
+  lastScannedAt: string | null;
+  windowStart: ISODate;
+  windowEnd: ISODate;
+}
+
+/**
+ * Nights with at least one bookable site, for a campground's calendar.
+ *
+ * "Available" here is deliberately loose — any site, any single night. It
+ * answers "is it worth looking at this date", which is what someone browsing a
+ * campground wants. `getWatchCalendar` uses the stricter definition.
+ */
+async function getFacilityCalendar(facilityId: string): Promise<CalendarAvailability | null> {
+  const facility = await facilityRepository.findByIdWithPark(facilityId);
+  if (!facility || !facility.active) return null;
+
+  const windowStart = fmt(new Date());
+  const windowEnd = addDays(windowStart, HORIZON_DAYS);
+  const slots = await availabilityRepository.listFreeSlots([facilityId], toDate(windowStart), toDate(windowEnd));
+
+  return {
+    facilityId: facility.id,
+    facilityName: facility.name,
+    parkName: facility.park.name,
+    freeDates: [...new Set(slots.map((slot) => fmt(slot.date)))].sort(),
+    lastScannedAt: facility.lastScannedAt ? facility.lastScannedAt.toISOString() : null,
+    windowStart,
+    windowEnd,
+  };
+}
+
+/**
+ * The same calendar, but only marking days a watch could actually book: the
+ * check-in must fall on a wanted weekday AND the whole stay must be free on one
+ * site. A green Friday you can't book for your two nights is worse than no
+ * calendar at all.
+ */
+async function getWatchCalendar(
+  facilityId: string,
+  checkinDays: number[],
+  nights: number,
+): Promise<CalendarAvailability | null> {
+  const base = await getFacilityCalendar(facilityId);
+  if (!base) return null;
+
+  const slots = await availabilityRepository.listFreeSlots(
+    [facilityId],
+    toDate(base.windowStart),
+    toDate(base.windowEnd),
+  );
+
+  // Reuse the search matcher so the calendar and the emails can never disagree
+  // about what counts as a match.
+  const units = new Map<number, { name: string; freeNights: Set<ISODate> }>();
+  for (const slot of slots) {
+    let unit = units.get(slot.unitId);
+    if (!unit) {
+      unit = { name: slot.unitName, freeNights: new Set() };
+      units.set(slot.unitId, unit);
+    }
+    unit.freeNights.add(fmt(slot.date));
+  }
+
+  const openings = findOpenings([...units.values()], checkinDays, nights, base.windowStart, base.windowEnd);
+  return { ...base, freeDates: openings.map((o) => o.checkin) };
 }
 
 /** Turn stored slots into the shape the page renders. */
