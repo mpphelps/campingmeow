@@ -251,13 +251,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         setAddress("My location");
         setLocating(false);
       },
-      () => {
+      (error) => {
         setLocating(false);
-        toast({
-          title: "Couldn't get your location",
-          description: "Allow location access, or keep browsing the full list.",
-          variant: "destructive",
-        });
+        const description =
+          error.code === error.PERMISSION_DENIED
+            ? "Your browser blocked the request. Allow location for this site, or type an address instead."
+            : error.code === error.TIMEOUT
+              ? "That took too long. Try again, or type an address instead."
+              : "Your device couldn't get a fix. Type an address instead.";
+        toast({ title: "Couldn't get your location", description, variant: "destructive" });
       },
       { timeout: 10_000 },
     );
