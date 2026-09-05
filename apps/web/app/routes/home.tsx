@@ -82,20 +82,23 @@ function ParkRow({
           aria-label={`Select ${park.name}`}
         />
         <AccordionTrigger>
-          <span className="font-medium">{park.name}</span>
-          <span className="ml-auto shrink-0 font-mono text-xs font-normal tracking-tight text-muted-foreground">
+          {/* Text stacks on mobile inside its own column so the chevron stays
+              on the right; side by side, the name wrapped to four lines and the
+              metadata collided with the icon links. */}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+            <span className="min-w-0 font-medium">{park.name}</span>
+            <span className="font-mono text-xs font-normal tracking-tight text-muted-foreground sm:ml-auto sm:shrink-0">
             {/* Distance is extra information, not a replacement — searching by
                 location shouldn't cost you the city you were reading. */}
             {park.distance !== null && <span className="text-foreground">{Math.round(park.distance)} mi · </span>}
             {park.city ? `${park.city} · ` : ""}
             {park.facilities.length} campground{park.facilities.length === 1 ? "" : "s"}
-            {selectedCount > 0 ? (
-              <span className="text-poppy"> · {selectedCount} selected</span>
-            ) : null}
+              {selectedCount > 0 ? <span className="text-poppy"> · {selectedCount} selected</span> : null}
+            </span>
           </span>
         </AccordionTrigger>
         {/* Sits outside the trigger: a link nested in a button is invalid HTML. */}
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
           <a
             href={mapsUrl(park)}
             target="_blank"
@@ -284,20 +287,31 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       </div>
 
       <div className="mt-6 space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by park name or city…"
             aria-label="Search parks"
-            className="max-w-xs"
+            className="sm:max-w-xs"
           />
-          <div className="ml-auto flex gap-2">
-            <Button variant="outline" disabled={selected.size === 0} onClick={() => navigate(`/search?facilities=${selectedIds}`)}>
+          {/* The two actions share a row on mobile rather than stacking — they
+              are a pair, and full-width buttons would push the list off-screen. */}
+          <div className="flex gap-2 sm:ml-auto">
+            <Button
+              variant="outline"
+              className="flex-1 sm:flex-none"
+              disabled={selected.size === 0}
+              onClick={() => navigate(`/search?facilities=${selectedIds}`)}
+            >
               Search availability
             </Button>
-            <Button disabled={selected.size === 0} onClick={() => navigate(`/watches/new?facilities=${selectedIds}`)}>
+            <Button
+              className="flex-1 sm:flex-none"
+              disabled={selected.size === 0}
+              onClick={() => navigate(`/watches/new?facilities=${selectedIds}`)}
+            >
               Create watch{selected.size > 0 ? ` (${selected.size})` : ""}
             </Button>
           </div>
@@ -307,11 +321,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <p className="text-sm text-muted-foreground">{selected.size} of {MAX_WATCH_FACILITIES} campgrounds selected.</p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <geocoder.Form
             method="get"
             action="/api/geocode"
-            className="flex gap-2"
+            className="flex flex-1 gap-2"
             onSubmit={() => setRadius((r) => (r === "any" ? "100" : r))}
           >
             <Input
@@ -325,22 +339,30 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               }}
               placeholder="City, ZIP, or address…"
               aria-label="Location"
-              className="w-56"
+              className="min-w-0 flex-1 sm:w-56 sm:flex-none"
             />
-            <Button type="submit" variant="outline" disabled={geocoder.state !== "idle"}>
+            <Button type="submit" variant="outline" className="shrink-0" disabled={geocoder.state !== "idle"}>
               {geocoder.state !== "idle" ? "Finding…" : "Find nearby"}
             </Button>
           </geocoder.Form>
-          <Button variant="outline" onClick={useMyLocation} disabled={locating}>
-            {locating ? "Locating…" : "Use my location"}
-          </Button>
-          <Select value={radius} onChange={(e) => setRadius(e.target.value)} aria-label="Distance" className="w-40" disabled={!origin}>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={useMyLocation} disabled={locating}>
+              {locating ? "Locating…" : "Use my location"}
+            </Button>
+            <Select
+              value={radius}
+              onChange={(e) => setRadius(e.target.value)}
+              aria-label="Distance"
+              className="flex-1 sm:w-40 sm:flex-none"
+              disabled={!origin}
+            >
             <option value="any">Any distance</option>
             <option value="25">Within 25 mi</option>
             <option value="50">Within 50 mi</option>
             <option value="100">Within 100 mi</option>
-            <option value="200">Within 200 mi</option>
-          </Select>
+              <option value="200">Within 200 mi</option>
+            </Select>
+          </div>
           {origin && <span className="text-xs text-muted-foreground">Distances from {origin.label}</span>}
         </div>
       </div>
