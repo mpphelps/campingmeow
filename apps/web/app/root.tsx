@@ -36,7 +36,10 @@ export const headers: Route.HeadersFunction = () => ({
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "strict-origin-when-cross-origin",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+  // geolocation=(self), not () — an empty allowlist blocks our own origin too,
+  // so "Use my location" failed before the browser even prompted. Camera and
+  // microphone stay fully off; we never use them.
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(self), interest-cohort=()",
   "Content-Security-Policy": CSP,
 });
 

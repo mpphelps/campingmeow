@@ -312,3 +312,34 @@ test.describe("city formatting", () => {
     await expect(page.getByText(/Carpinteria/)).toBeVisible();
   });
 });
+
+// "Use my location" was silently dead in every browser because our own
+// Permissions-Policy header shipped `geolocation=()` — an EMPTY allowlist,
+// which blocks the calling origin too. The browser refused before ever
+// prompting, so the failure looked like the user had denied permission.
+test.describe("browser geolocation", () => {
+  test.use({
+    user: null,
+    permissions: ["geolocation"],
+    geolocation: { latitude: 37.7456, longitude: -119.5936 }, // Yosemite Valley
+  });
+
+  test("the page's own Permissions-Policy allows geolocation", async ({ page }) => {
+    const response = await page.goto("/");
+    expect(response?.headers()["permissions-policy"]).toContain("geolocation=(self)");
+  });
+
+  test("Use my location resolves a position and enables the distance filter", async ({ page }) => {
+    const park = await createPark({ name: "Yosemite", city: "Yosemite Village", latitude: 37.74, longitude: -119.59 });
+    await createFacility({ name: "Upper Pines", parkId: park.id });
+
+    await page.goto("/");
+    await expect(page.getByLabel("Distance")).toBeDisabled();
+
+    await page.getByRole("button", { name: "Use my location" }).click();
+
+    // An origin is set, so distance sorting/filtering becomes available.
+    await expect(page.getByLabel("Distance")).toBeEnabled();
+    await expect(page.getByText("Distances from your location")).toBeVisible();
+  });
+});

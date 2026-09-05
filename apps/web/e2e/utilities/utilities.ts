@@ -26,6 +26,9 @@ export type CreateParkOverrides = {
   city?: string | null;
   active?: boolean;
   allowWebBooking?: boolean;
+  /** Coordinates drive the distance filter; null (default) leaves a park unlocatable. */
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 let parkSeedCounter = 0;
@@ -39,6 +42,8 @@ export async function createPark(overrides: CreateParkOverrides = {}) {
       city: overrides.city !== undefined ? overrides.city : "Test City",
       active: overrides.active ?? true,
       allowWebBooking: overrides.allowWebBooking ?? true,
+      latitude: overrides.latitude ?? null,
+      longitude: overrides.longitude ?? null,
     },
   });
 }
