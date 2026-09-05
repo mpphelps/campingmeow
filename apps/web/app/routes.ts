@@ -6,6 +6,7 @@ export default [
     route("parks", "routes/parks.tsx"),
     route("parks/:parkId", "routes/parks.$parkId.tsx"),
     route("search", "routes/search.tsx"),
+    route("preferences", "routes/preferences.tsx"),
     route("watches", "routes/watches.tsx"),
     route("watches/new", "routes/watches.new.tsx"),
     route("admin", "routes/admin.tsx"),

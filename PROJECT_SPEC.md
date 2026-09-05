@@ -30,6 +30,7 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 - **WatchFacility** — join table: the facilities a watch covers (one pattern, many campgrounds).
 - **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated timestamp. Unique per (facility, unit, date). Every night in the scanned window is stored, taken ones included, so a search can tell "booked" from "never scanned".
 - **AvailabilityEvent** — facility, unit, night, `opened`/`closed`, `detectedAt`, `notifiedAt`. Append-only log of transitions, written inside the same transaction that overwrites the slots. A night with **no previous row produces no event** — going from "no data" to "40 free nights" is discovery, not 40 openings (first scan of a campground, a new site in the grid, a date rolling into the window). `notifiedAt` makes it a durable outbox: if email is down, events stay unnotified and go out next pass. Also the trend source, which is why pruning past slots is not a loss.
+- **UserPreference** — per user: `emailNotifications`, plus an `unsubscribeToken`. The token is a stored random value rather than a signature on purpose: an unsubscribe link must never expire (a dead one gets reported as spam instead), must be revocable by regenerating it, and must survive a `SESSION_SECRET` rotation.
 - **EmailLog** — one row per notification batch: `sentAt`, `quantity`, and a JSON `{ userId: [eventId] }` map. The emails-per-day metric.
 - *(No job or sweep table.)* Scanner health is derived from `Facility.lastScannedAt`: backlog is the count past its freshness target, throughput is the count scanned in the last hour, and worst-case staleness is the oldest timestamp. A jobs table would be a second, drifting copy of state we already keep.
 
@@ -69,7 +70,10 @@ pickNext():
 - The notifier runs on its own **10-minute loop** (there are no sweeps to hang off). It claims `opened` events with `notifiedAt IS NULL`, matches them to watches, groups by user, sends one email each, then stamps `notifiedAt` and writes an EmailLog row.
 - An event is one *night*; a watch wants a *stay*. A night opening can complete a multi-night stay whose other nights were already free, so matching checks the candidate check-ins that the opened night could belong to and confirms every night of the stay is free.
 - No re-send while it stays open — that falls out of events only firing on transitions, so only within-batch dedup on (watch, unit, check-in) is needed. If it closes and reopens, that's a new event and a new email.
-- Email contains facility name, dates, and a link to ReserveCalifornia.
+- Email contains facility name, dates, a link to ReserveCalifornia, and an unsubscribe link.
+- **Email is a delivery channel, not the subscription.** Turning it off leaves the watch running, so the openings are still there to see in-app; the notifier simply skips that user. Deactivating the watch is a separate action on `/watches`.
+- `/preferences` works signed in **or** with the token from an email. Loading it never changes anything — mail scanners follow every link in an email, so a link that acted on GET would unsubscribe people who never clicked. The toggle is a POST, and `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058) give Gmail its native button, which POSTs.
+- The token grants exactly one power: toggling that user's email. It is never a login, and shows nothing beyond the address the mail already went to.
 
 ## 6. Out of scope (for now)
 

@@ -16,6 +16,7 @@
     "DISABLE_NOTIFIER",
     "RESEND_API_KEY",
     "EMAIL_FROM",
+    "SITE_URL",
     "LOG_LEVEL"
   ],
   "tasks": {

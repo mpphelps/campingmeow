@@ -15,6 +15,32 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   watches   Watch[]
+  preference UserPreference?
+}
+
+// Per-user settings. A separate table rather than columns on User so this can
+// grow without touching the Auth0-synced identity fields.
+model UserPreference {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// When false the notifier skips this user. Their watches keep running, so
+  /// the openings are still there to look at in-app — email is just the
+  /// delivery channel, not the subscription itself.
+  emailNotifications Boolean @default(true)
+
+  /// Lets someone change this setting from an email without logging in.
+  ///
+  /// Deliberately a stored random value, not a signature: it must never expire
+  /// (an old email whose unsubscribe link is dead gets reported as spam
+  /// instead), it must be revocable by regenerating it, and it must survive a
+  /// SESSION_SECRET rotation. It is a bearer token, so it grants exactly one
+  /// power — toggling this flag — and nothing else.
+  unsubscribeToken String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // A "place" in ReserveCalifornia terms: a state park containing bookable facilities.

@@ -14,6 +14,12 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /**
+   * Extra headers, used for RFC 8058 one-click unsubscribe. Gmail and Yahoo
+   * surface a native Unsubscribe button when these are present, and it POSTs —
+   * which is why it can act directly while an in-body link cannot.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface EmailSender {
@@ -54,6 +60,7 @@ class ResendSender implements EmailSender {
         to: [message.to],
         subject: message.subject,
         text: message.text,
+        ...(message.headers ? { headers: message.headers } : {}),
       }),
     });
 
