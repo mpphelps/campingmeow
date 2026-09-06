@@ -144,3 +144,130 @@ test.describe("scanner pause — non-admin", () => {
     expect(response.status()).toBe(403);
   });
 });
+
+/**
+ * Banning an account. It must actually bite — signing the account out and
+ * stopping its email — and it must lift without losing anything.
+ */
+test.describe("ban users", () => {
+  test.use({ user: { email: "admin@example.com", firstName: "Admin", lastName: "User", permissions: ["admin:site"] } });
+
+  test("bans an account and lifts the ban", async ({ page }) => {
+    const victim = await createOwnerUser({ email: "spammer@example.com", firstName: "Spam", lastName: "Mer" });
+
+    await page.goto("/admin");
+    const row = page.getByRole("row", { name: /spammer@example.com/ });
+    await expect(row.getByRole("button", { name: "Ban", exact: true })).toBeVisible();
+    await row.getByRole("button", { name: "Ban", exact: true }).click();
+
+    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByText("Banned")).toBeVisible();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).not.toBeNull();
+
+    await page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Unban" }).click();
+    await expect(
+      page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Ban", exact: true }),
+    ).toBeVisible();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
+  });
+
+  test("refuses to let an admin ban themselves", async ({ page }) => {
+    const me = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+
+    const response = await page.request.post("/api/user-ban", { form: { userId: me.id, banned: "true" } });
+
+    expect(response.status()).toBe(422);
+    expect((await response.json()).error).toContain("your own account");
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: me.id } })).bannedAt).toBeNull();
+  });
+});
+
+test.describe("ban users — authorization", () => {
+  test.use({ user: { email: "nobody@example.com", firstName: "No", lastName: "Body" } });
+
+  test("a non-admin cannot ban anyone", async ({ page }) => {
+    const victim = await createOwnerUser({ email: "target@example.com", firstName: "Tar", lastName: "Get" });
+
+    const response = await page.request.post("/api/user-ban", { form: { userId: victim.id, banned: "true" } });
+
+    expect(response.status()).toBe(403);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
+  });
+});
+
+/**
+ * The users table has to answer "why didn't this person get an email?" without
+ * a database session — so it shows what they watch, whether email is on, and
+ * how much they have actually been sent.
+ */
+test.describe("user detail", () => {
+  test.use({ user: { email: "admin@example.com", firstName: "Admin", lastName: "User", permissions: ["admin:site"] } });
+
+  test("shows watches on demand, plus email state and volume", async ({ page }) => {
+    const watcher = await createOwnerUser({ email: "watcher@example.com", firstName: "Wat", lastName: "Cher" });
+    const park = await createPark({ name: "Big Basin Redwoods" });
+    const facility = await createFacility({ name: "Huckleberry", parkId: park.id });
+    await createWatch({ userId: watcher.id, facilityIds: facility.id, checkinDays: [5, 6], nights: 2 });
+
+    await prisma.userPreference.create({
+      data: { userId: watcher.id, emailNotifications: false, unsubscribeToken: `tok-${Date.now()}` },
+    });
+    await prisma.emailLog.create({ data: { quantity: 1, metadata: { [watcher.id]: ["evt-1"] } } });
+
+    await page.goto("/admin");
+    const row = page.getByRole("row", { name: /watcher@example.com/ });
+
+    // Email is off, and we have sent them exactly one in both windows.
+    await expect(row.getByText("off")).toBeVisible();
+    await expect(row.getByText("1 / 1")).toBeVisible();
+
+    // The watch itself is hidden until asked for.
+    await expect(page.getByText("Big Basin Redwoods — Huckleberry")).toHaveCount(0);
+    await row.getByRole("button", { name: "1" }).click();
+    await expect(page.getByText("Big Basin Redwoods — Huckleberry")).toBeVisible();
+    await expect(page.getByText("Fri, Sat · 2 nights")).toBeVisible();
+  });
+
+  test("says never for someone who has had no email", async ({ page }) => {
+    await createOwnerUser({ email: "quiet@example.com", firstName: "Qui", lastName: "Et" });
+
+    await page.goto("/admin");
+
+    const row = page.getByRole("row", { name: /quiet@example.com/ });
+    await expect(row.getByText("never")).toBeVisible();
+    await expect(row.getByText("0 / 0")).toBeVisible();
+  });
+});
+
+/**
+ * What a banned person actually experiences.
+ *
+ * Auth0 has no idea we banned anyone, so signing in still succeeds on their
+ * side. Without the callback check they would land back looking signed out,
+ * try again, and loop — which is worse than a refusal.
+ */
+test.describe("being banned", () => {
+  test.use({ user: { email: "banned@example.com", firstName: "Ban", lastName: "Ned" } });
+
+  test("an existing session stops working the moment the ban lands", async ({ page }) => {
+    // The session is live: a guarded page loads and the header greets them.
+    await page.goto("/watches");
+    await expect(page).toHaveURL(/\/watches/);
+    await expect(page.getByRole("link", { name: "My watches" }).first()).toBeVisible();
+
+    await prisma.user.update({ where: { email: "banned@example.com" }, data: { bannedAt: new Date() } });
+
+    // Same cookie, now read as signed out. Checked on the home page because a
+    // guarded route would bounce to Auth0, which tests cannot follow.
+    await page.goto("/");
+    await expect(page.getByRole("link", { name: "My watches" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Log in" }).first()).toBeVisible();
+  });
+
+  test("the account-closed page explains it and needs no session", async ({ page }) => {
+    await page.goto("/account-closed");
+
+    await expect(page.getByRole("heading", { name: "Account closed" })).toBeVisible();
+    await expect(page.getByText("This account can no longer be used")).toBeVisible();
+    await expect(page.getByText("Nothing has been deleted", { exact: false })).toBeVisible();
+  });
+});

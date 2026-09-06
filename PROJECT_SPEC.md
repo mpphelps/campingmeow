@@ -34,11 +34,21 @@ and a date pattern; we watch, and email them when a match opens.
    says when it was last updated, a campground never scanned says so rather than
    reporting "nothing open", and dates past the window are refused rather than
    answered from data we do not have.
-7. **Notifications.** Email only, via **Resend**, behind a small sender
+7. **Available nearby.** The product's first question — *"I want to go camping,
+   where can I go?"* — answered as a grid: campgrounds down the side, the next
+   63 nights across the top, shaded by how many sites are free. Location plus a
+   radius, filterable by type of camping, and rows can be selected straight
+   into a watch. Deliberately **no date filter and no weekend default**: we do
+   not know when someone wants to go, so the grid shows every night and tints
+   weekends rather than choosing for them. A cell means *one site free that
+   night* and says so — two green cells side by side may be different sites, so
+   a run does not promise a multi-night stay. Fully booked campgrounds are
+   hidden, with a count, so the page is openings rather than a wall of grey.
+8. **Notifications.** Email only, via **Resend**, behind a small sender
    interface — tests use a logging stub, and swapping to Brevo or SES is one
    adapter. Sent when a night flips unavailable → available and completes a stay
    a watch wants. See §5.
-8. **Politeness.** One request per **second**, matching camply
+9. **Politeness.** One request per **second**, matching camply
    (`juftin/camply`), which has run against this API for years at that rate.
    Enforced by a **global rate gate** in `packages/scanner` that every request
    queues at, so the rate is a property of the process: no amount of concurrency
@@ -49,33 +59,40 @@ and a date pattern; we watch, and email them when a match opens.
    the scan. Caveat: camply spreads its load over thousands of users' IPs in
    short bursts, where we are one Pi running continuously, so 1s is a ceiling,
    not a target. See `packages/scanner/API.md` §4b.
-9. **Monitoring.** Scanner **cycle time** is the number that says whether we are
+10. **Monitoring.** Scanner **cycle time** is the number that says whether we are
    keeping up, alongside campgrounds scanned and failed per pass, and emails
    sent. A 429 from ReserveCalifornia is an incident, not a metric: it stops
    scanning and mail together, and the admin panel raises it as one.
-10. **Admin panel.** Admin-only: list users and their watches, run a catalog
-    sync, re-check non-bookable campgrounds, and read scanner and notifier
-    health. There is no button to start or stop a sweep — the scanner picks its
-    own work.
-11. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and
+11. **Admin panel.** Admin-only: list users with what they watch and how much
+    email they have had, ban and unban accounts, run a catalog sync, re-check
+    non-bookable campgrounds, pause or resume the sweep, and read scanner and
+    notifier health. A ban signs an account out everywhere and stops its email;
+    nothing is deleted, so watches and settings survive an unban. An admin
+    cannot ban themselves.
+12. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and
     checked in the service layer. No role column: Auth0 is the source of truth.
-12. **Endpoints that spend an external budget require an account.** Browsing
-    parks and reading stored availability is public — neither costs anything
-    outside our database. `/api/geocode` (Nominatim) returns 401 to anonymous
-    callers, because per-request caps bound one request, not how many a stranger
-    opens at once.
-13. **We say what we do not do.** Past the 63-day window we link to
+13. **Reading is public; changing things is not.** Browsing parks, searching
+    availability, and the nearby grid all answer from our own database and are
+    open to everyone — finding somewhere to camp is the product's main question
+    and gating it would gate the product. Geocoding is public too: what keeps
+    us inside OpenStreetMap's policy is the one-request-per-second throttle in
+    `lib/nominatim.server.ts`, which is process-wide, not an auth check.
+    Watches, preferences and every admin action require an account.
+14. **We say what we do not do.** Past the 63-day window we link to
     ReserveCalifornia (`reservecalifornia.com/park/{rcPlaceId}/{rcFacilityId}` —
     both ids are stored), which browses the full six months better than we
     would. For anyone wanting faster or broader scanning than one shared IP can
     give, we link to camply, which runs on their machine with their own budget.
     Both are honest answers rather than limits dressed up as features.
-14. **Branding.** CampingMeow favicon. Mascot: a cat in a Super Troopers hat
+15. **Branding.** CampingMeow favicon. Mascot: a cat in a Super Troopers hat
     asking if you want to go camping right meow.
 
 ## 3. Data model
 
-- **User** — Auth0 sync (email, name). Roles come from the JWT, not a column.
+- **User** — Auth0 sync (email, name), plus `bannedAt`. A timestamp rather
+  than a flag so we know when, and null rather than a deleted row so an unban
+  restores the account intact. A banned account reads as signed out everywhere
+  and the notifier skips it. Roles come from the JWT, not a column.
 - **Park** — RC place id, name, city, lat/long, active flag.
 - **Facility** — RC facility id, name, parent park, active flag,
   `lastScannedAt`, `bookableSites`, `status`, `siteCategories` and
@@ -151,6 +168,37 @@ so a second container would get its own gate and silently double our request
 rate. That makes single-instance an assumption rather than a coincidence — two
 processes would also double-send email, since claiming events and stamping them
 is a read-then-write with the whole send loop in between.
+
+### A cycle survives being interrupted
+
+A pass keeps its start time until it finishes, and the work remaining is
+derived: any campground whose `lastScannedAt` predates that start still needs
+doing. So a pause, or a crash, costs nothing but the campground in flight — the
+next pass picks up where the last one stopped instead of restarting at zero.
+That mattered: the process died thirteen times in a day before the leak below
+was found, and each restart used to throw away up to an hour of sweeping.
+
+An admin can pause the sweep from the panel. It is checked between campgrounds
+rather than between cycles, because a pause that waits half an hour is not a
+pause.
+
+### Writing only what changed
+
+A scan produces the campground's whole window, but between two passes 25
+minutes apart almost none of it has moved. Rewriting all of it — ~3,200 rows for
+a mid-size campground — was both wasteful and, as it turned out, fatal: Prisma
+retained its serialised query for a write that large, about 19MB per scan,
+until the process ran out of heap and was killed.
+
+So the write is now a delta. `diffSlots` compares the new window to the stored
+one and writes only nights that changed, plus any the grid has stopped
+reporting. Measured against a stand-in API: a first scan writes 3,200 rows in
+600ms, and every scan after writes **nothing** in 35ms, or ~58 rows when 1% of
+nights flip. Memory is flat across hundreds of scans.
+
+The first scan of a campground still writes the whole window, so that insert is
+chunked — one statement with 22,400 bind parameters is within Postgres's 65,535
+limit but not comfortably, and it is what the leak fed on.
 
 ### Why one flat loop
 
@@ -310,16 +358,17 @@ Supporting rules:
 ## 8. Status
 
 Built and deployed: catalog sync, browse, location search, watches, the scanner
-sweep, availability events, search, notification email with one-click
-unsubscribe, the daily email cap, preferences, admin panel, RBAC.
+sweep, availability events, search, the nearby availability grid, site-type
+icons, notification email with one-click unsubscribe, the daily email cap,
+preferences, admin panel with user bans and sweep pause, RBAC.
 
 Not built:
 
-- **Ban users.** Listed as an admin capability in earlier drafts; no code
-  exists. Theoretical until there are users to ban.
 - **Self-healing `no_inventory`** (§4), and consecutive-scan confirmation before
   demoting a campground.
-- **Mascot artwork** (§2.14). The favicon and the "right meow" tagline shipped.
 - **A per-user campground cap.** Watches are capped by count (10) and width
   (20); capping distinct campgrounds instead would track email volume more
   closely.
+- **Pruning `AvailabilityEvent`.** Nothing deletes from it and nothing reads old
+  rows yet. Kept deliberately as the trend source, but it grows by tens of
+  thousands of rows a day and will need a retention window before it is used.

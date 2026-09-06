@@ -14,11 +14,28 @@ export const userRepository = {
   },
 
 
-  async listAllWithWatchCounts() {
+  /**
+   * Everyone, with what they are actually watching and whether they take email.
+   *
+   * The admin panel is the only place this runs and there are a handful of
+   * users, so pulling the watches inline is cheaper than a second round trip.
+   */
+  async listAllWithDetail() {
     return prisma.user.findMany({
-      include: { _count: { select: { watches: { where: { active: true } } } } },
+      include: {
+        preference: { select: { emailNotifications: true } },
+        watches: {
+          where: { active: true },
+          orderBy: { createdAt: "desc" },
+          include: { facilities: { include: { facility: { include: { park: { select: { name: true } } } } } } },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
+  },
+
+  async setBanned(id: string, banned: boolean) {
+    return prisma.user.update({ where: { id }, data: { bannedAt: banned ? new Date() : null } });
   },
 
   async count() {

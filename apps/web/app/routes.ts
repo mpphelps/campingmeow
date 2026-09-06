@@ -9,6 +9,7 @@ export default [
     route("search", "routes/search.tsx"),
     route("available-nearby", "routes/available-nearby.tsx"),
     route("preferences", "routes/preferences.tsx"),
+    route("account-closed", "routes/account-closed.tsx"),
     route("watches", "routes/watches.tsx"),
     route("watches/new", "routes/watches.new.tsx"),
     route("admin", "routes/admin.tsx"),
@@ -24,4 +25,5 @@ export default [
   route("api/geocode", "routes/api.geocode.ts"),
   route("api/recheck-facilities", "routes/api.recheck-facilities.ts"),
   route("api/scanner-pause", "routes/api.scanner-pause.ts"),
+  route("api/user-ban", "routes/api.user-ban.ts"),
 ] satisfies RouteConfig;
