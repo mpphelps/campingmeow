@@ -13,13 +13,6 @@ export interface CatalogSyncResult {
   facilitiesDeactivated: number;
 }
 
-export interface ParkListItem {
-  id: string;
-  name: string;
-  city: string | null;
-  facilityCount: number;
-}
-
 export interface ParkDetail {
   id: string;
   name: string;
@@ -75,7 +68,6 @@ function titleCaseCity(city: string | null): string | null {
 
 export const catalogService = {
   sync,
-  listParks,
   listParksWithFacilities,
   getParkDetail,
   getFacilityDetail,
@@ -88,7 +80,7 @@ export const catalogService = {
  * filtering happen instantly as the user types.
  */
 async function listParksWithFacilities(): Promise<ParkBrowseItem[]> {
-  const parks = await parkRepository.searchActiveWithFacilities(null);
+  const parks = await parkRepository.listActiveWithFacilities();
   return parks.map((park) => ({
     id: park.id,
     name: park.name,
@@ -134,17 +126,6 @@ async function getFacilityDetail(facilityId: string): Promise<FacilityDetail | n
     parkId: facility.park.id,
     parkName: facility.park.name,
   };
-}
-
-/** Active parks, optionally filtered by name/city, shaped for the browse page. */
-async function listParks(query: string | null): Promise<ParkListItem[]> {
-  const parks = await parkRepository.searchActive(query);
-  return parks.map((park) => ({
-    id: park.id,
-    name: park.name,
-    city: titleCaseCity(park.city),
-    facilityCount: park._count.facilities,
-  }));
 }
 
 /** One park with its active facilities, or null if unknown/inactive. */

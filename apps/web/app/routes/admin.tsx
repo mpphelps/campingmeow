@@ -48,7 +48,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
     { label: "Requests queued", value: dashboard.queueDepth },
     { label: "Cycle (min)", value: scanner.lastCycleDurationMs === null ? "—" : Math.round(scanner.lastCycleDurationMs / 60000) },
-    { label: "Emails today", value: notifier.emailsSentToday },
+    { label: "Emails (24h)", value: `${notifier.quota.sentLast24h}/${notifier.quota.limit}` },
   ];
 
   return (
@@ -170,7 +170,25 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 <dt className="text-muted-foreground">Openings awaiting email</dt>
                 <dd className="font-medium tabular-nums">{notifier.pendingEvents}</dd>
               </div>
+              <div>
+                {/* Trailing 24h, not since midnight: Resend's free quota
+                    resets 24 hours after each send, not at a fixed hour. */}
+                <dt className="text-muted-foreground">Emails sent (rolling 24h)</dt>
+                <dd className="font-medium tabular-nums">
+                  {notifier.quota.sentLast24h} / {notifier.quota.limit}
+                  <span className="ml-2 font-normal text-muted-foreground">{notifier.quota.remaining} left</span>
+                </dd>
+              </div>
             </dl>
+
+            {notifier.quota.paused && (
+              <Alert variant="warning" className="mt-3">
+                <AlertTitle>Notifications paused — daily email limit reached</AlertTitle>
+                Openings are still being found and stored; they are held unsent and go out when the allowance returns
+                {notifier.quota.resumesAt ? ` (around ${new Date(notifier.quota.resumesAt).toLocaleString()})` : ""}. Raising
+                the Resend plan lifts the cap.
+              </Alert>
+            )}
 
             {notifier.sender.startsWith("stub") && (
               <Alert variant="warning" className="mt-3">

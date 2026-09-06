@@ -42,7 +42,7 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 - **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated timestamp. Unique per (facility, unit, date). Every night in the scanned window is stored, taken ones included, so a search can tell "booked" from "never scanned".
 - **AvailabilityEvent** — facility, unit, night, `opened`/`closed`, `detectedAt`, `notifiedAt`. Append-only log of transitions, written inside the same transaction that overwrites the slots. A night with **no previous row produces no event** — going from "no data" to "40 free nights" is discovery, not 40 openings (first scan of a campground, a new site in the grid, a date rolling into the window). `notifiedAt` makes it a durable outbox: if email is down, events stay unnotified and go out next pass. Also the trend source, which is why pruning past slots is not a loss.
 - **UserPreference** — per user: `emailNotifications`, plus an `unsubscribeToken`. The token is a stored random value rather than a signature on purpose: an unsubscribe link must never expire (a dead one gets reported as spam instead), must be revocable by regenerating it, and must survive a `SESSION_SECRET` rotation.
-- **EmailLog** — one row per notification batch: `sentAt`, `quantity`, and a JSON `{ userId: [eventId] }` map. The emails-per-day metric.
+- **EmailLog** — one row per notification batch: `sentAt`, `quantity`, and a JSON `{ userId: [eventId] }` map. Powers the emails-per-day metric and the trailing-window quota check.
 - *(No job or sweep table.)* The scanner sweeps the whole catalog every pass, so there is no work to schedule and nothing to record. Health is the duration of the last pass, held in memory. A jobs table would be a second, drifting copy of state we already keep.
 
 ## 4. Scanner design
@@ -154,13 +154,33 @@ many openings are waiting.
 ## 5. Notifications
 
 - On an unavailable → available event, find watches whose pattern matches the slot's facility, weekday, and (with consecutive open nights) night count. No date filtering: a watch covers the whole window.
-- The notifier runs on its own **10-minute loop** (there are no sweeps to hang off). It claims `opened` events with `notifiedAt IS NULL`, matches them to watches, groups by user, sends one email each, then stamps `notifiedAt` and writes an EmailLog row.
+- The notifier runs **once at the end of each scan pass**, not on a loop of its own: a pass is exactly the unit of work that produces events, so there is nothing to poll for. It claims `opened` events with `notifiedAt IS NULL`, matches them to watches, groups by user, sends one email each, then stamps `notifiedAt` and writes an EmailLog row.
+- Only events whose mail actually went out are stamped. A send that fails, or one held back by the daily cap, leaves its events unnotified for the next pass. An event matched by two users, one unreachable, is held for both — so that user may get a second copy later. **A duplicate is a much smaller failure than never being told a site opened**, which is the one thing the product promises.
 - An event is one *night*; a watch wants a *stay*. A night opening can complete a multi-night stay whose other nights were already free, so matching checks the candidate check-ins that the opened night could belong to and confirms every night of the stay is free.
 - No re-send while it stays open — that falls out of events only firing on transitions, so only within-batch dedup on (watch, unit, check-in) is needed. If it closes and reopens, that's a new event and a new email.
 - Email contains facility name, dates, a link to ReserveCalifornia, and an unsubscribe link.
 - **Email is a delivery channel, not the subscription.** Turning it off leaves the watch running, so the openings are still there to see in-app; the notifier simply skips that user. Deactivating the watch is a separate action on `/watches`.
 - `/preferences` works signed in **or** with the token from an email. Loading it never changes anything — mail scanners follow every link in an email, so a link that acted on GET would unsubscribe people who never clicked. The toggle is a POST, and `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058) give Gmail its native button, which POSTs.
 - The token grants exactly one power: toggling that user's email. It is never a login, and shows nothing beyond the address the mail already went to.
+
+### The daily cap
+
+Resend's free tier is 100 emails a day, and per their docs the quota **resets 24
+hours after each send** rather than at midnight. So we count over a *trailing
+24-hour window*, not a calendar day: counting to midnight would let us send 100
+at 11pm and 100 more an hour later, and the second hundred would be refused.
+
+We stop at **95**, just short of their number. Hitting our own cap pauses
+sending cleanly; hitting theirs is a 429 in the middle of a batch. If Resend
+does return `daily_quota_exceeded` anyway — it can see mail we didn't send, from
+the dashboard or another app on the key — that answer outranks our tally and
+stops the pass immediately.
+
+Openings found while paused are **held, not dropped**. Budget returns on its own
+as the oldest batch ages out of the window, and the held events go out on a
+later pass. The home page says alerts are paused and roughly when they resume,
+because otherwise silence looks exactly like "nothing has opened" — and the
+whole promise of the product is that silence means nothing has opened.
 
 ## 6. Out of scope (for now)
 

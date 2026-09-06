@@ -3,12 +3,14 @@ import { test, expect } from "../test-fixtures";
 import { createOwnerUser, createPark, createFacility, createWatch, createSlots, nextWeekday, isoDate } from "../utilities/utilities";
 import { notificationService } from "../../app/services/notification.service.server";
 import { stubSender } from "../../app/lib/email.server";
+import { DAILY_EMAIL_LIMIT, EMAIL_QUOTA_WINDOW_MS } from "../../app/lib/limits";
 
 /**
  * The notifier turns "a night opened" into "you have mail". These drive
- * `runOnce()` directly — the background loop is disabled in tests
- * (DISABLE_NOTIFIER=1) so it can't race them, and RESEND_API_KEY is kept out
- * of the web server's env so the sender is always the stub.
+ * `runOnce()` directly — the notifier has no loop of its own, and the scanner
+ * that would call it is off in tests (DISABLE_SCANNER=1), so nothing races
+ * them. RESEND_API_KEY is kept out of the web server's env, so the sender is
+ * always the stub.
  */
 const UNIT_ID = 4242;
 const SITE = "Site 42";
@@ -152,5 +154,80 @@ test.describe("notifier", () => {
     });
 
     expect(await notificationService.runOnce()).toEqual({ events: 0, emails: 0 });
+  });
+});
+
+/**
+ * The free Resend tier is 100 emails a day, and their quota "resets after 24
+ * hours" rather than at midnight — so we count over a trailing window. Running
+ * out must pause sending without losing the openings.
+ */
+test.describe("daily email cap", () => {
+  test.use({ user: null });
+
+  test.beforeEach(() => {
+    stubSender.sent.length = 0;
+  });
+
+  /** Pretend we already sent `quantity` emails `hoursAgo` hours ago. */
+  async function seedSends(quantity: number, hoursAgo: number) {
+    return prisma.emailLog.create({
+      data: { quantity, metadata: {}, sentAt: new Date(Date.now() - hoursAgo * 60 * 60 * 1000) },
+    });
+  }
+
+  test("holds openings unsent once the allowance is gone, and retries them later", async () => {
+    const fri = nextWeekday(5);
+    const { facility } = await setup({ checkinDays: [5], nights: 1 });
+    await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
+    const event = await openingEvent(facility.id, fri);
+
+    const spent = await seedSends(DAILY_EMAIL_LIMIT, 1);
+
+    const result = await notificationService.runOnce();
+    expect(result.emails).toBe(0);
+    expect(stubSender.sent).toHaveLength(0);
+
+    // The outbox property: held, not dropped. Marking it notified here would
+    // lose the opening forever.
+    const held = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(held.notifiedAt).toBeNull();
+
+    // Age those sends out of the trailing window; the same event now goes out.
+    await prisma.emailLog.update({
+      where: { id: spent.id },
+      data: { sentAt: new Date(Date.now() - EMAIL_QUOTA_WINDOW_MS - 60_000) },
+    });
+
+    expect((await notificationService.runOnce()).emails).toBe(1);
+    expect(stubSender.sent).toHaveLength(1);
+    const after = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(after.notifiedAt).not.toBeNull();
+  });
+
+  test("counts over a rolling 24 hours, not since midnight", async () => {
+    await seedSends(DAILY_EMAIL_LIMIT, 25);
+    const stale = await notificationService.getQuotaStatus();
+    expect(stale.sentLast24h).toBe(0);
+    expect(stale.paused).toBe(false);
+
+    await seedSends(DAILY_EMAIL_LIMIT, 2);
+    const spent = await notificationService.getQuotaStatus();
+    expect(spent.sentLast24h).toBe(DAILY_EMAIL_LIMIT);
+    expect(spent.remaining).toBe(0);
+    expect(spent.paused).toBe(true);
+    // Budget returns when the oldest batch in the window ages out of it.
+    expect(Date.parse(spent.resumesAt!)).toBeGreaterThan(Date.now());
+  });
+
+  test("tells people on the home page when alerts are paused", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByText("Email alerts are paused")).toBeHidden();
+
+    await seedSends(DAILY_EMAIL_LIMIT, 1);
+
+    await page.goto("/");
+    await expect(page.getByText("Email alerts are paused")).toBeVisible();
+    await expect(page.getByText("Openings are still being tracked and held", { exact: false })).toBeVisible();
   });
 });

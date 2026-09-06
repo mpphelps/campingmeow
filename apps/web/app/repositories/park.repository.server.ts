@@ -24,37 +24,13 @@ export const parkRepository = {
     return result.count;
   },
 
-  async searchActive(query: string | null) {
-    return prisma.park.findMany({
-      where: {
-        active: true,
-        ...(query
-          ? {
-              OR: [
-                { name: { contains: query, mode: "insensitive" as const } },
-                { city: { contains: query, mode: "insensitive" as const } },
-              ],
-            }
-          : {}),
-      },
-      include: { _count: { select: { facilities: { where: { active: true } } } } },
-      orderBy: { name: "asc" },
-    });
-  },
-
-  async searchActiveWithFacilities(query: string | null) {
+  /** Every active park that has at least one active campground. Filtering is
+   *  done in the browser on the home page, so there is no query here. */
+  async listActiveWithFacilities() {
     return prisma.park.findMany({
       where: {
         active: true,
         facilities: { some: { active: true } },
-        ...(query
-          ? {
-              OR: [
-                { name: { contains: query, mode: "insensitive" as const } },
-                { city: { contains: query, mode: "insensitive" as const } },
-              ],
-            }
-          : {}),
       },
       include: { facilities: { where: { active: true }, orderBy: { name: "asc" } } },
       orderBy: { name: "asc" },

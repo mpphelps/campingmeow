@@ -9,8 +9,10 @@ import { Label } from "@campingmeow/ui/components/label";
 import { List, ListItem } from "@campingmeow/ui/components/list";
 import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
 import type { Route } from "./+types/search";
+import { addDays, fmt } from "@campingmeow/scanner";
 import { ValidationError } from "~/lib/errors";
 import { HORIZON_DAYS } from "~/lib/limits";
+import { timeAgo } from "~/lib/time";
 import { parseSearchParams } from "~/lib/search-params";
 import { availabilityService } from "~/services/availability.service.server";
 import { catalogService } from "~/services/catalog.service.server";
@@ -34,9 +36,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Bounds for the date inputs. The server rejects out-of-range dates anyway —
   // these just stop the picker offering days we have no data for.
-  const now = new Date();
-  const today = iso(now);
-  const horizon = iso(new Date(now.getTime() + HORIZON_DAYS * 86_400_000));
+  const today = fmt(new Date());
+  const horizon = addDays(today, HORIZON_DAYS);
 
   // No search run yet — just show the form.
   if (!hasQuery) {
@@ -269,17 +270,5 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
 
 
-function iso(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function timeAgo(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";

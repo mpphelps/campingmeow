@@ -32,6 +32,22 @@ export const MAX_WATCH_FACILITIES = 20;
 export const MAX_WATCHES_PER_USER = 10;
 
 /**
+ * Emails we allow ourselves to send in any rolling 24 hours.
+ *
+ * Resend's free tier is 100 a day and, per their docs, the quota "resets after
+ * 24 hours" rather than at midnight — so this is a trailing window, not a
+ * calendar day. Counting to midnight would let us send 100 at 11pm and 100
+ * more an hour later, and Resend would refuse the second hundred.
+ *
+ * We stop just short of their number. Hitting our own cap pauses notifications
+ * cleanly and tells the user; hitting theirs is a 429 in the middle of a batch.
+ */
+export const DAILY_EMAIL_LIMIT = 95;
+
+/** The window DAILY_EMAIL_LIMIT is measured over, matching Resend's reset. */
+export const EMAIL_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How far ahead the scanner looks, and therefore how far a watch can see.
  *
  * ReserveCalifornia books ~6 months out, but two thirds of a 180-day scan went

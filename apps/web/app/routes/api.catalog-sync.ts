@@ -1,3 +1,4 @@
+import { ScanQueueFullError } from "@campingmeow/scanner";
 import { ForbiddenError } from "~/lib/errors";
 import { authService } from "../services/auth.service.server";
 import { catalogService } from "../services/catalog.service.server";
@@ -17,6 +18,9 @@ export async function action({ request }: Route.ActionArgs) {
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return new Response("Forbidden", { status: 403 });
+    }
+    if (err instanceof ScanQueueFullError) {
+      return new Response(err.message, { status: 503, headers: { "Retry-After": "60" } });
     }
     throw err;
   }

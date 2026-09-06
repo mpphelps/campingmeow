@@ -4,6 +4,7 @@ import { Link, useFetcher, useNavigate } from "react-router";
 import { MapPinIcon, TreePineIcon } from "lucide-react";
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@campingmeow/ui/components/accordion";
+import { Alert, AlertTitle } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
@@ -15,12 +16,18 @@ import { ParkBanner } from "~/components/park-banner";
 import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
+import { notificationService } from "~/services/notification.service.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const parks = await catalogService.listParksWithFacilities();
+  const [parks, quota] = await Promise.all([
+    catalogService.listParksWithFacilities(),
+    // Someone whose alerts are paused would otherwise read the silence as
+    // "nothing has opened", which is the opposite of what is happening.
+    notificationService.getQuotaStatus(),
+  ]);
   // ?q= only seeds the box (e.g. from a shared /parks?q= link); all filtering
   // is client-side so it updates on every keystroke.
-  return { parks, initialQuery: new URL(request.url).searchParams.get("q") ?? "" };
+  return { parks, quota, initialQuery: new URL(request.url).searchParams.get("q") ?? "" };
 }
 
 type Located = ParkBrowseItem & { distance: number | null };
@@ -142,7 +149,7 @@ function ParkRow({
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { parks, initialQuery } = loaderData;
+  const { parks, quota, initialQuery } = loaderData;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState(initialQuery);
   const [origin, setOrigin] = useState<{ latitude: number; longitude: number; label: string } | null>(null);
@@ -272,6 +279,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div>
+      {quota.paused && (
+        <Alert variant="warning" className="mb-4">
+          <AlertTitle>Email alerts are paused</AlertTitle>
+          We&apos;ve hit today&apos;s free-tier email limit, so we&apos;re not sending right now. Openings are still being
+          tracked and held — you&apos;ll get them once sending resumes
+          {quota.resumesAt ? ` (about ${resumesIn(quota.resumesAt)})` : ""}. Nothing is lost, and your watches keep running.
+        </Alert>
+      )}
+
       <div className="-mt-6 mb-8 overflow-hidden rounded-xl border sm:-mt-8">
         <ParkBanner className="block h-36 w-full sm:h-48" />
         {/* Caption block, like the print series: solid field, title in cream. */}
@@ -393,3 +409,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 }
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";
+
+/** "in about 3 hours" — how long until the oldest batch ages out of the window. */
+function resumesIn(iso: string): string {
+  const minutes = Math.round((Date.parse(iso) - Date.now()) / 60_000);
+  if (minutes <= 1) return "any moment";
+  if (minutes < 60) return `in about ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return `in about ${hours} hour${hours === 1 ? "" : "s"}`;
+}
