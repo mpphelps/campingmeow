@@ -146,25 +146,27 @@ test.describe("scanner pause — non-admin", () => {
 });
 
 /**
- * Suspending an account. A ban must actually bite — signing the account out
- * and stopping its email — and it must be reversible without losing anything.
+ * Banning an account. It must actually bite — signing the account out and
+ * stopping its email — and it must lift without losing anything.
  */
-test.describe("suspend users", () => {
+test.describe("ban users", () => {
   test.use({ user: { email: "admin@example.com", firstName: "Admin", lastName: "User", permissions: ["admin:site"] } });
 
-  test("suspends an account and restores it", async ({ page }) => {
+  test("bans an account and lifts the ban", async ({ page }) => {
     const victim = await createOwnerUser({ email: "spammer@example.com", firstName: "Spam", lastName: "Mer" });
 
     await page.goto("/admin");
     const row = page.getByRole("row", { name: /spammer@example.com/ });
-    await expect(row.getByRole("button", { name: "Suspend" })).toBeVisible();
-    await row.getByRole("button", { name: "Suspend" }).click();
+    await expect(row.getByRole("button", { name: "Ban", exact: true })).toBeVisible();
+    await row.getByRole("button", { name: "Ban", exact: true }).click();
 
-    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByText("Suspended")).toBeVisible();
+    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByText("Banned")).toBeVisible();
     expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).not.toBeNull();
 
-    await page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Restore" }).click();
-    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Suspend" })).toBeVisible();
+    await page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Unban" }).click();
+    await expect(
+      page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Ban", exact: true }),
+    ).toBeVisible();
     expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
   });
 
@@ -179,15 +181,59 @@ test.describe("suspend users", () => {
   });
 });
 
-test.describe("suspend users — authorization", () => {
+test.describe("ban users — authorization", () => {
   test.use({ user: { email: "nobody@example.com", firstName: "No", lastName: "Body" } });
 
-  test("a non-admin cannot suspend anyone", async ({ page }) => {
+  test("a non-admin cannot ban anyone", async ({ page }) => {
     const victim = await createOwnerUser({ email: "target@example.com", firstName: "Tar", lastName: "Get" });
 
     const response = await page.request.post("/api/user-ban", { form: { userId: victim.id, banned: "true" } });
 
     expect(response.status()).toBe(403);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
+  });
+});
+
+/**
+ * The users table has to answer "why didn't this person get an email?" without
+ * a database session — so it shows what they watch, whether email is on, and
+ * how much they have actually been sent.
+ */
+test.describe("user detail", () => {
+  test.use({ user: { email: "admin@example.com", firstName: "Admin", lastName: "User", permissions: ["admin:site"] } });
+
+  test("shows watches on demand, plus email state and volume", async ({ page }) => {
+    const watcher = await createOwnerUser({ email: "watcher@example.com", firstName: "Wat", lastName: "Cher" });
+    const park = await createPark({ name: "Big Basin Redwoods" });
+    const facility = await createFacility({ name: "Huckleberry", parkId: park.id });
+    await createWatch({ userId: watcher.id, facilityIds: facility.id, checkinDays: [5, 6], nights: 2 });
+
+    await prisma.userPreference.create({
+      data: { userId: watcher.id, emailNotifications: false, unsubscribeToken: `tok-${Date.now()}` },
+    });
+    await prisma.emailLog.create({ data: { quantity: 1, metadata: { [watcher.id]: ["evt-1"] } } });
+
+    await page.goto("/admin");
+    const row = page.getByRole("row", { name: /watcher@example.com/ });
+
+    // Email is off, and we have sent them exactly one in both windows.
+    await expect(row.getByText("off")).toBeVisible();
+    await expect(row.getByText("1 / 1")).toBeVisible();
+
+    // The watch itself is hidden until asked for.
+    await expect(page.getByText("Big Basin Redwoods — Huckleberry")).toHaveCount(0);
+    await row.getByRole("button", { name: "1" }).click();
+    await expect(page.getByText("Big Basin Redwoods — Huckleberry")).toBeVisible();
+    await expect(page.getByText("Fri, Sat · 2 nights")).toBeVisible();
+  });
+
+  test("says never for someone who has had no email", async ({ page }) => {
+    await createOwnerUser({ email: "quiet@example.com", firstName: "Qui", lastName: "Et" });
+
+    await page.goto("/admin");
+
+    const row = page.getByRole("row", { name: /quiet@example.com/ });
+    await expect(row.getByText("never")).toBeVisible();
+    await expect(row.getByText("0 / 0")).toBeVisible();
   });
 });

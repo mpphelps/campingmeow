@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 
 import { Alert, AlertTitle } from "@campingmeow/ui/components/alert";
@@ -8,6 +8,7 @@ import { Separator } from "@campingmeow/ui/components/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@campingmeow/ui/components/table";
 import type { Route } from "./+types/admin";
 import { ForbiddenError } from "~/lib/errors";
+import { timeAgo } from "~/lib/time";
 import { withAuth } from "~/lib/with-auth";
 import type { AuthUser } from "~/services/auth.service.server";
 import { adminService } from "~/services/admin.service.server";
@@ -33,6 +34,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const recheck = useFetcher<{ checked: number; nowBookable: string[] }>();
   const pause = useFetcher<{ paused: boolean }>();
   const ban = useFetcher<{ banned?: boolean; error?: string }>();
+  // Watches are useful when answering "why did I not get an email", and noise
+  // the rest of the time, so they open on demand.
+  const [expanded, setExpanded] = useState<string | null>(null);
   const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
@@ -251,6 +255,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <TableHead>Email</TableHead>
             <TableHead>Name</TableHead>
             <TableHead>Watches</TableHead>
+            <TableHead>Email</TableHead>
+            <TableHead>Sent 24h / 7d</TableHead>
+            <TableHead>Last email</TableHead>
             <TableHead>Joined</TableHead>
             <TableHead className="text-right">Access</TableHead>
           </TableRow>
@@ -260,10 +267,36 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <TableRow key={user.id} className={user.banned ? "opacity-60" : undefined}>
               <TableCell>
                 {user.email}
-                {user.banned && <span className="ml-2 text-xs font-medium text-destructive">Suspended</span>}
+                {user.banned && <span className="ml-2 text-xs font-medium text-destructive">Banned</span>}
               </TableCell>
               <TableCell>{user.name}</TableCell>
-              <TableCell className="tabular-nums">{user.watchCount}</TableCell>
+              <TableCell className="tabular-nums">
+                {user.watchCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(expanded === user.id ? null : user.id)}
+                    className="underline underline-offset-2 hover:text-foreground"
+                    aria-expanded={expanded === user.id}
+                  >
+                    {user.watchCount}
+                  </button>
+                ) : (
+                  0
+                )}
+              </TableCell>
+              <TableCell>
+                {user.emailNotifications ? (
+                  <span className="text-muted-foreground">on</span>
+                ) : (
+                  <span className="font-medium text-destructive">off</span>
+                )}
+              </TableCell>
+              <TableCell className="tabular-nums">
+                {user.emailsLast24h} / {user.emailsLast7d}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {user.lastEmailedAt ? timeAgo(user.lastEmailedAt) : "never"}
+              </TableCell>
               <TableCell className="tabular-nums">{user.joined}</TableCell>
               <TableCell className="text-right">
                 <ban.Form method="post" action="/api/user-ban">
@@ -275,12 +308,28 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                     variant={user.banned ? "outline" : "destructive"}
                     disabled={ban.state !== "idle"}
                   >
-                    {user.banned ? "Restore" : "Suspend"}
+                    {user.banned ? "Unban" : "Ban"}
                   </Button>
                 </ban.Form>
               </TableCell>
             </TableRow>
           ))}
+          {dashboard.users
+            .filter((user) => user.id === expanded)
+            .map((user) => (
+              <TableRow key={`${user.id}-watches`}>
+                <TableCell colSpan={8} className="bg-muted/40">
+                  <ul className="space-y-2 text-xs">
+                    {user.watches.map((watch) => (
+                      <li key={watch.id}>
+                        <span className="font-medium">{watch.pattern}</span>
+                        <span className="text-muted-foreground"> — {watch.campgrounds.join("; ")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </TableCell>
+              </TableRow>
+            ))}
         </TableBody>
       </Table>
 
@@ -290,8 +339,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
         </Alert>
       )}
       <p className="mt-3 text-xs text-muted-foreground">
-        Suspending signs an account out everywhere and stops its email. Nothing is deleted — watches and settings come back
-        if it is restored.
+        Banning signs an account out everywhere and stops its email. Nothing is deleted — watches and settings come back if
+        the ban is lifted.
       </p>
     </div>
   );

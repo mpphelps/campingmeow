@@ -4,11 +4,11 @@ import { authService } from "~/services/auth.service.server";
 import type { Route } from "./+types/api.user-ban";
 
 /**
- * Suspend or restore an account. Admin-only.
+ * Ban or unban an account. Admin-only.
  *
  * A ban is reversible and destroys nothing: the account reads as signed out
  * everywhere and stops receiving email, but its watches and preferences are
- * still there if it is restored.
+ * still there when the ban is lifted.
  */
 export async function action({ request }: Route.ActionArgs) {
   if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });

@@ -4,12 +4,15 @@ import { authService, type AuthUser } from "./auth.service.server";
 import { availabilityService } from "./availability.service.server";
 import { notificationService, type NotifierStatus } from "./notification.service.server";
 import { scannerService, type ScannerStatus } from "./scanner.service.server";
+import { emailLogRepository } from "../repositories/email-log.repository.server";
 import { userRepository } from "../repositories/user.repository.server";
 import { parkRepository } from "../repositories/park.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { watchRepository } from "../repositories/watch.repository.server";
 
 export const ADMIN_PERMISSION = "admin:site";
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export interface AdminDashboard {
   stats: {
@@ -31,8 +34,21 @@ export interface AdminDashboard {
     email: string;
     name: string;
     watchCount: number;
-    /** Suspended: reads as signed out everywhere, and gets no email. */
+    /** Banned: reads as signed out everywhere, and gets no email. */
     banned: boolean;
+    /** False when they have turned email off; their watches still run. */
+    emailNotifications: boolean;
+    /** Emails this account received in the trailing 24 hours, and in 7 days. */
+    emailsLast24h: number;
+    emailsLast7d: number;
+    /** When we last mailed them, or null if never. */
+    lastEmailedAt: string | null;
+    /** What they are watching, so a support question can be answered here. */
+    watches: {
+      id: string;
+      pattern: string;
+      campgrounds: string[];
+    }[];
     /** yyyy-MM-dd */
     joined: string;
   }[];
@@ -46,7 +62,7 @@ export const adminService = {
 };
 
 /**
- * Suspend or restore an account.
+ * Ban or unban an account.
  *
  * A ban makes the account read as signed out everywhere and stops its email;
  * nothing is deleted, so watches and preferences come back intact on an unban.
@@ -81,10 +97,28 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
     facilityRepository.countActive(),
     watchRepository.countActive(),
     watchRepository.listWatchedFacilityIds(),
-    userRepository.listAllWithWatchCounts(),
+    userRepository.listAllWithDetail(),
     scannerService.getStatus(),
     notificationService.getStatus(),
   ]);
+
+  // Who we mailed and when. The per-user breakdown lives in each batch's JSON,
+  // so it is tallied here rather than queried — a week of batches is small.
+  const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const batches = await emailLogRepository.listSince(week);
+  const emailStats = new Map<string, { last24h: number; last7d: number; lastAt: Date }>();
+  for (const batch of batches) {
+    const recipients = (batch.metadata ?? {}) as Record<string, string[]>;
+    for (const userId of Object.keys(recipients)) {
+      const stat = emailStats.get(userId) ?? { last24h: 0, last7d: 0, lastAt: batch.sentAt };
+      stat.last7d++;
+      if (batch.sentAt.getTime() >= dayAgo) stat.last24h++;
+      // Batches come back newest first, so the first one seen is the latest.
+      if (batch.sentAt > stat.lastAt) stat.lastAt = batch.sentAt;
+      emailStats.set(userId, stat);
+    }
+  }
 
   return {
     stats: {
@@ -102,8 +136,19 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       id: u.id,
       email: u.email,
       name: [u.firstName, u.lastName].filter(Boolean).join(" "),
-      watchCount: u._count.watches,
+      watchCount: u.watches.length,
       banned: u.bannedAt !== null,
+      // No preference row yet means they have never changed it, and the
+      // default is on.
+      emailNotifications: u.preference?.emailNotifications ?? true,
+      emailsLast24h: emailStats.get(u.id)?.last24h ?? 0,
+      emailsLast7d: emailStats.get(u.id)?.last7d ?? 0,
+      lastEmailedAt: emailStats.get(u.id)?.lastAt.toISOString() ?? null,
+      watches: u.watches.map((watch) => ({
+        id: watch.id,
+        pattern: `${watch.checkinDays.map((d) => DAY_LABELS[d]).join(", ")} · ${watch.nights} night${watch.nights === 1 ? "" : "s"}`,
+        campgrounds: watch.facilities.map((wf) => `${wf.facility.park.name} — ${wf.facility.name}`),
+      })),
       joined: u.createdAt.toISOString().slice(0, 10),
     })),
   };

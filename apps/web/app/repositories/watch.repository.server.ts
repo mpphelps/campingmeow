@@ -47,7 +47,7 @@ export const watchRepository = {
    */
   async listActiveByFacilityIds(facilityIds: string[]) {
     return prisma.watch.findMany({
-      // Suspended accounts are excluded here rather than at send time: a ban
+      // Banned accounts are excluded here rather than at send time: a ban
       // should stop the mail, and the watch itself is left intact so it works
       // again if the account is restored.
       where: {

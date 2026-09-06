@@ -63,11 +63,12 @@ and a date pattern; we watch, and email them when a match opens.
    keeping up, alongside campgrounds scanned and failed per pass, and emails
    sent. A 429 from ReserveCalifornia is an incident, not a metric: it stops
    scanning and mail together, and the admin panel raises it as one.
-11. **Admin panel.** Admin-only: list users and their watches, suspend and
-    restore accounts, run a catalog sync, re-check non-bookable campgrounds,
-    pause or resume the sweep, and read scanner and notifier health. Suspending
-    signs an account out everywhere and stops its email; nothing is deleted, so
-    watches and settings survive a restore. An admin cannot suspend themselves.
+11. **Admin panel.** Admin-only: list users with what they watch and how much
+    email they have had, ban and unban accounts, run a catalog sync, re-check
+    non-bookable campgrounds, pause or resume the sweep, and read scanner and
+    notifier health. A ban signs an account out everywhere and stops its email;
+    nothing is deleted, so watches and settings survive an unban. An admin
+    cannot ban themselves.
 12. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and
     checked in the service layer. No role column: Auth0 is the source of truth.
 13. **Reading is public; changing things is not.** Browsing parks, searching
@@ -90,7 +91,8 @@ and a date pattern; we watch, and email them when a match opens.
 
 - **User** — Auth0 sync (email, name), plus `bannedAt`. A timestamp rather
   than a flag so we know when, and null rather than a deleted row so an unban
-  restores the account intact. Roles come from the JWT, not a column.
+  restores the account intact. A banned account reads as signed out everywhere
+  and the notifier skips it. Roles come from the JWT, not a column.
 - **Park** — RC place id, name, city, lat/long, active flag.
 - **Facility** — RC facility id, name, parent park, active flag,
   `lastScannedAt`, `bookableSites`, `status`, `siteCategories` and
@@ -358,7 +360,7 @@ Supporting rules:
 Built and deployed: catalog sync, browse, location search, watches, the scanner
 sweep, availability events, search, the nearby availability grid, site-type
 icons, notification email with one-click unsubscribe, the daily email cap,
-preferences, admin panel with account suspension and sweep pause, RBAC.
+preferences, admin panel with user bans and sweep pause, RBAC.
 
 Not built:
 

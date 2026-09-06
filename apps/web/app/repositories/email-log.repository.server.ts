@@ -20,6 +20,21 @@ export const emailLogRepository = {
    * The quota window is a trailing 24 hours, so this is what says when budget
    * frees up again: that batch ages out first.
    */
+  /**
+   * Batches in a window, with the per-user metadata.
+   *
+   * Who got what is stored as JSON rather than rows, so it is counted in
+   * memory — fine at 95 emails a day, and it keeps the write path a single
+   * insert.
+   */
+  async listSince(since: Date) {
+    return prisma.emailLog.findMany({
+      where: { sentAt: { gte: since } },
+      select: { sentAt: true, metadata: true },
+      orderBy: { sentAt: "desc" },
+    });
+  },
+
   async oldestSentAtSince(since: Date): Promise<Date | null> {
     const row = await prisma.emailLog.findFirst({
       where: { sentAt: { gte: since } },
