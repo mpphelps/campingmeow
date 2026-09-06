@@ -32,6 +32,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const scanner = dashboard.scanner;
   const recheck = useFetcher<{ checked: number; nowBookable: string[] }>();
   const pause = useFetcher<{ paused: boolean }>();
+  const ban = useFetcher<{ banned?: boolean; error?: string }>();
   const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
@@ -251,19 +252,47 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <TableHead>Name</TableHead>
             <TableHead>Watches</TableHead>
             <TableHead>Joined</TableHead>
+            <TableHead className="text-right">Access</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {dashboard.users.map((user) => (
-            <TableRow key={user.id}>
-              <TableCell>{user.email}</TableCell>
+            <TableRow key={user.id} className={user.banned ? "opacity-60" : undefined}>
+              <TableCell>
+                {user.email}
+                {user.banned && <span className="ml-2 text-xs font-medium text-destructive">Suspended</span>}
+              </TableCell>
               <TableCell>{user.name}</TableCell>
               <TableCell className="tabular-nums">{user.watchCount}</TableCell>
               <TableCell className="tabular-nums">{user.joined}</TableCell>
+              <TableCell className="text-right">
+                <ban.Form method="post" action="/api/user-ban">
+                  <input type="hidden" name="userId" value={user.id} />
+                  <input type="hidden" name="banned" value={String(!user.banned)} />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant={user.banned ? "outline" : "destructive"}
+                    disabled={ban.state !== "idle"}
+                  >
+                    {user.banned ? "Restore" : "Suspend"}
+                  </Button>
+                </ban.Form>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+
+      {ban.data?.error && (
+        <Alert variant="destructive" className="mt-3 max-w-2xl">
+          {ban.data.error}
+        </Alert>
+      )}
+      <p className="mt-3 text-xs text-muted-foreground">
+        Suspending signs an account out everywhere and stops its email. Nothing is deleted — watches and settings come back
+        if it is restored.
+      </p>
     </div>
   );
 }

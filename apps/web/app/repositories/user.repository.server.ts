@@ -21,6 +21,10 @@ export const userRepository = {
     });
   },
 
+  async setBanned(id: string, banned: boolean) {
+    return prisma.user.update({ where: { id }, data: { bannedAt: banned ? new Date() : null } });
+  },
+
   async count() {
     return prisma.user.count();
   },

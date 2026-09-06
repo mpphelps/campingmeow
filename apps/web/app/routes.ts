@@ -24,4 +24,5 @@ export default [
   route("api/geocode", "routes/api.geocode.ts"),
   route("api/recheck-facilities", "routes/api.recheck-facilities.ts"),
   route("api/scanner-pause", "routes/api.scanner-pause.ts"),
+  route("api/user-ban", "routes/api.user-ban.ts"),
 ] satisfies RouteConfig;

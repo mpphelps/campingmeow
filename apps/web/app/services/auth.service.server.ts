@@ -62,7 +62,7 @@ async function getAuthenticatedUser(request: Request): Promise<AuthUser | null> 
     const email = await getTestSessionEmail(request);
     if (!email) return null;
     const user = await userRepository.findByEmail(email);
-    if (!user) return null;
+    if (!user || user.bannedAt) return null;
     const sessionPermissions = await getTestSessionPermissions(request);
     return {
       id: user.id,
@@ -82,7 +82,9 @@ async function getAuthenticatedUser(request: Request): Promise<AuthUser | null> 
     if (!email) return null;
 
     const user = await userRepository.findByEmail(email);
-    if (!user) return null;
+    // A banned account reads as signed out everywhere: every route, loader and
+    // service already handles a null user, so one check here covers the app.
+    if (!user || user.bannedAt) return null;
 
     return {
       id: user.id,

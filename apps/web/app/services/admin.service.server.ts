@@ -1,3 +1,5 @@
+import { ValidationError } from "~/lib/errors";
+import { logger } from "~/lib/logger.server";
 import { authService, type AuthUser } from "./auth.service.server";
 import { availabilityService } from "./availability.service.server";
 import { notificationService, type NotifierStatus } from "./notification.service.server";
@@ -29,6 +31,8 @@ export interface AdminDashboard {
     email: string;
     name: string;
     watchCount: number;
+    /** Suspended: reads as signed out everywhere, and gets no email. */
+    banned: boolean;
     /** yyyy-MM-dd */
     joined: string;
   }[];
@@ -38,7 +42,25 @@ export interface AdminDashboard {
 export const adminService = {
   getDashboard,
   setScannerPaused,
+  setUserBanned,
 };
+
+/**
+ * Suspend or restore an account.
+ *
+ * A ban makes the account read as signed out everywhere and stops its email;
+ * nothing is deleted, so watches and preferences come back intact on an unban.
+ */
+async function setUserBanned(admin: AuthUser, userId: string, banned: boolean): Promise<{ banned: boolean }> {
+  authService.requirePermission(admin, ADMIN_PERMISSION);
+  // Banning yourself would lock you out of the page you would need to undo it.
+  if (userId === admin.id) {
+    throw new ValidationError({ userId: "You can't ban your own account." });
+  }
+  await userRepository.setBanned(userId, banned);
+  logger.info({ action: banned ? "admin.user_banned" : "admin.user_unbanned", userId, by: admin.id }, "user ban changed");
+  return { banned };
+}
 
 /**
  * Stop or restart the sweep. Admin-only, and checked here rather than in the
@@ -81,6 +103,7 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       email: u.email,
       name: [u.firstName, u.lastName].filter(Boolean).join(" "),
       watchCount: u._count.watches,
+      banned: u.bannedAt !== null,
       joined: u.createdAt.toISOString().slice(0, 10),
     })),
   };

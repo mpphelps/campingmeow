@@ -144,3 +144,50 @@ test.describe("scanner pause — non-admin", () => {
     expect(response.status()).toBe(403);
   });
 });
+
+/**
+ * Suspending an account. A ban must actually bite — signing the account out
+ * and stopping its email — and it must be reversible without losing anything.
+ */
+test.describe("suspend users", () => {
+  test.use({ user: { email: "admin@example.com", firstName: "Admin", lastName: "User", permissions: ["admin:site"] } });
+
+  test("suspends an account and restores it", async ({ page }) => {
+    const victim = await createOwnerUser({ email: "spammer@example.com", firstName: "Spam", lastName: "Mer" });
+
+    await page.goto("/admin");
+    const row = page.getByRole("row", { name: /spammer@example.com/ });
+    await expect(row.getByRole("button", { name: "Suspend" })).toBeVisible();
+    await row.getByRole("button", { name: "Suspend" }).click();
+
+    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByText("Suspended")).toBeVisible();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).not.toBeNull();
+
+    await page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("row", { name: /spammer@example.com/ }).getByRole("button", { name: "Suspend" })).toBeVisible();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
+  });
+
+  test("refuses to let an admin ban themselves", async ({ page }) => {
+    const me = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+
+    const response = await page.request.post("/api/user-ban", { form: { userId: me.id, banned: "true" } });
+
+    expect(response.status()).toBe(422);
+    expect((await response.json()).error).toContain("your own account");
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: me.id } })).bannedAt).toBeNull();
+  });
+});
+
+test.describe("suspend users — authorization", () => {
+  test.use({ user: { email: "nobody@example.com", firstName: "No", lastName: "Body" } });
+
+  test("a non-admin cannot suspend anyone", async ({ page }) => {
+    const victim = await createOwnerUser({ email: "target@example.com", firstName: "Tar", lastName: "Get" });
+
+    const response = await page.request.post("/api/user-ban", { form: { userId: victim.id, banned: "true" } });
+
+    expect(response.status()).toBe(403);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: victim.id } })).bannedAt).toBeNull();
+  });
+});

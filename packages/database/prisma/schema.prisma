@@ -12,6 +12,10 @@ model User {
   email     String   @unique
   firstName String
   lastName  String?
+  /// Set when an admin suspends the account. A timestamp rather than a flag so
+  /// we know when it happened, and null rather than a row deletion so their
+  /// watches and history survive an unban.
+  bannedAt  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   watches   Watch[]
