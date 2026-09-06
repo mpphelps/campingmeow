@@ -40,6 +40,11 @@ function assertOnline(): void {
  */
 export async function getBaseUrl(): Promise<string> {
   assertOnline();
+  // Point the client at a local stand-in. Only for load and leak testing — it
+  // lets the real request path run (retries, error handling, body handling)
+  // without touching ReserveCalifornia or waiting on its latency.
+  const override = process.env.RC_BASE_URL;
+  if (override) return override.endsWith("/") ? override : override + "/";
   if (cachedBase) return cachedBase;
   // Single-flight. On a cold start every queued scan calls this at once, and
   // without the guard each one fires its own config.json request — a burst at
@@ -58,7 +63,9 @@ async function resolveBaseUrl(): Promise<string> {
       headers: { "User-Agent": UA },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (res.ok) {
+    if (!res.ok) {
+      await discard(res);
+    } else {
       const cfg = (await res.json()) as { rdrApiUrl?: string };
       if (cfg.rdrApiUrl) {
         cachedBase = cfg.rdrApiUrl.endsWith("/")
@@ -82,6 +89,22 @@ async function resolveBaseUrl(): Promise<string> {
 const DEFAULT_BLOCK_MS = 15 * 60 * 1000;
 
 /**
+ * Throw away a response body we are not going to read.
+ *
+ * Node's fetch does not free a response until its body is consumed or
+ * cancelled: the buffered bytes stay reachable and the socket cannot go back
+ * to the pool. Every error path here used to return without touching the body,
+ * so each one leaked — quietly, and in proportion to how often the API failed.
+ */
+async function discard(res: Response): Promise<void> {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // Already consumed or torn down; nothing to release.
+  }
+}
+
+/**
  * Longest we will wait for one ReserveCalifornia response.
  *
  * Grid calls normally answer in well under two seconds, so this is not a
@@ -90,6 +113,15 @@ const DEFAULT_BLOCK_MS = 15 * 60 * 1000;
  * takes the existing retry-with-backoff path.
  */
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Base backoff after a connection failure or 5xx, doubling per attempt.
+ *
+ * Overridable only so a local harness can drive thousands of failures through
+ * this path without spending six seconds on each one. Leave it alone in
+ * production: a struggling server needs more than the usual one-second gap.
+ */
+const RETRY_BACKOFF_MS = Number(process.env.RC_RETRY_BACKOFF_MS) || 2000;
 
 /** Wall-clock time we're allowed to call again; 0 means we're not blocked. */
 let blockedUntil = 0;
@@ -167,7 +199,7 @@ async function rdr<T>(
       lastErr = err;
       // Extra backoff on top of the gate: a struggling server needs more than
       // the usual one-second gap.
-      if (attempt < retries) await sleep(2000 * 2 ** attempt);
+      if (attempt < retries) await sleep(RETRY_BACKOFF_MS * 2 ** attempt);
       continue;
     }
 
@@ -175,6 +207,7 @@ async function rdr<T>(
     // the penalty — so trip a breaker that stops every caller, not just this
     // one, until the window passes.
     if (res.status === 429 || res.status === 403) {
+      await discard(res);
       const wait = parseRetryAfter(res.headers.get("retry-after")) ?? DEFAULT_BLOCK_MS;
       blockedUntil = Date.now() + Math.max(wait, DEFAULT_BLOCK_MS);
       const blocked = new RateLimitedError(new Date(blockedUntil));
@@ -186,14 +219,16 @@ async function rdr<T>(
 
     // Sporadic 5xx under load; those really are transient.
     if (res.status >= 500) {
+      await discard(res);
       lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
-      if (attempt < retries) await sleep(2000 * 2 ** attempt);
+      if (attempt < retries) await sleep(RETRY_BACKOFF_MS * 2 ** attempt);
       continue;
     }
 
     // Any other 4xx is our bug — a bad id or a malformed body. Retrying it
     // just spends requests we can't afford.
     if (!res.ok) {
+      await discard(res);
       throw new Error(`RDR ${path} -> HTTP ${res.status} ${res.statusText}`);
     }
 

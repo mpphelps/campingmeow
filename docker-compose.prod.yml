@@ -20,6 +20,8 @@ services:
       # the machine is out of memory and the kernel picks a victim; with one it
       # collects, and if it genuinely cannot it dies loudly with a heap error
       # instead of silently.
+      # A ceiling well inside the box, so a future leak dies loudly with a heap
+      # error instead of taking the machine down with it.
       NODE_OPTIONS: --max-old-space-size=1024
     # A container limit is what makes Docker report OOMKilled=true. Without it
     # the kernel kills the process and Docker reports nothing useful.

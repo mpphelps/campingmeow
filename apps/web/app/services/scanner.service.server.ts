@@ -39,6 +39,25 @@ import { notificationService } from "./notification.service.server";
  */
 const IDLE_SLEEP_MS = 60_000;
 
+/** Campgrounds between heap readings. Small enough to see a curve, quiet enough to read. */
+const HEAP_LOG_EVERY = 10;
+
+function logHeap(after: string): void {
+  const mem = process.memoryUsage();
+  logger.info(
+    {
+      action: "scanner.heap",
+      progress,
+      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+      externalMb: Math.round(mem.external / 1024 / 1024),
+      rssMb: Math.round(mem.rss / 1024 / 1024),
+      after,
+    },
+    "heap",
+  );
+}
+
 export interface ScannerStatus {
   running: boolean;
   /** Campground currently being scanned, if any. */
@@ -217,6 +236,12 @@ async function runCycle(): Promise<void> {
       current = null;
       currentPark = null;
       progress++;
+      // Per campground, not per cycle. A cycle takes 40 minutes and the process
+      // dies before finishing one, so cycle-end logging never got to run — this
+      // is the growth curve we actually need: flat means the leak is elsewhere,
+      // a steady climb means we retain something per scan, a step means one
+      // campground allocates enormously.
+      if (progress % HEAP_LOG_EVERY === 0) logHeap(facility.name);
     }
   }
 
