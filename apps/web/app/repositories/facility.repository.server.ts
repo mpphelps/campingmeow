@@ -90,7 +90,10 @@ export const facilityRepository = {
     return prisma.facility.findMany({
       where: { active: true, status: "bookable" },
       select: { id: true, name: true, park: { select: { name: true } } },
-      orderBy: { id: "asc" },
+      // By park, then name. Ordering by the cuid primary key was stable but
+      // looked random on the admin panel, which made a sweep impossible to
+      // follow — you could not tell progress from thrashing.
+      orderBy: [{ park: { name: "asc" } }, { name: "asc" }],
     });
   },
 

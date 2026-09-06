@@ -37,7 +37,18 @@ export interface AdminDashboard {
 // Domain service for the admin panel.
 export const adminService = {
   getDashboard,
+  setScannerPaused,
 };
+
+/**
+ * Stop or restart the sweep. Admin-only, and checked here rather than in the
+ * route, like every other permission in the app.
+ */
+function setScannerPaused(user: AuthUser, paused: boolean): { paused: boolean } {
+  authService.requirePermission(user, ADMIN_PERMISSION);
+  scannerService.setPaused(paused);
+  return { paused };
+}
 
 async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
   authService.requirePermission(user, ADMIN_PERMISSION);
