@@ -237,3 +237,37 @@ test.describe("user detail", () => {
     await expect(row.getByText("0 / 0")).toBeVisible();
   });
 });
+
+/**
+ * What a banned person actually experiences.
+ *
+ * Auth0 has no idea we banned anyone, so signing in still succeeds on their
+ * side. Without the callback check they would land back looking signed out,
+ * try again, and loop — which is worse than a refusal.
+ */
+test.describe("being banned", () => {
+  test.use({ user: { email: "banned@example.com", firstName: "Ban", lastName: "Ned" } });
+
+  test("an existing session stops working the moment the ban lands", async ({ page }) => {
+    // The session is live: a guarded page loads and the header greets them.
+    await page.goto("/watches");
+    await expect(page).toHaveURL(/\/watches/);
+    await expect(page.getByRole("link", { name: "My watches" }).first()).toBeVisible();
+
+    await prisma.user.update({ where: { email: "banned@example.com" }, data: { bannedAt: new Date() } });
+
+    // Same cookie, now read as signed out. Checked on the home page because a
+    // guarded route would bounce to Auth0, which tests cannot follow.
+    await page.goto("/");
+    await expect(page.getByRole("link", { name: "My watches" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Log in" }).first()).toBeVisible();
+  });
+
+  test("the account-closed page explains it and needs no session", async ({ page }) => {
+    await page.goto("/account-closed");
+
+    await expect(page.getByRole("heading", { name: "Account closed" })).toBeVisible();
+    await expect(page.getByText("This account can no longer be used")).toBeVisible();
+    await expect(page.getByText("Nothing has been deleted", { exact: false })).toBeVisible();
+  });
+});
