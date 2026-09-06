@@ -70,11 +70,13 @@ export const notificationService = {
 
 
 async function getStatus(): Promise<NotifierStatus> {
-  const [pending, quota] = await Promise.all([
-    availabilityRepository.listUnnotifiedOpenings(BATCH_LIMIT),
+  // Counted in Postgres rather than by fetching rows and measuring the array:
+  // this runs on every admin poll, and the count is all it displays.
+  const [pendingEvents, quota] = await Promise.all([
+    availabilityRepository.countUnnotifiedOpenings(),
     getQuotaStatus(),
   ]);
-  return { sender: emailSender.name, pendingEvents: pending.length, quota };
+  return { sender: emailSender.name, pendingEvents, quota };
 }
 
 /**

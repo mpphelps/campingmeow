@@ -73,6 +73,10 @@ export interface ScanSummary {
   sites: number;
   slots: number;
   freeSlots: number;
+  /** Nights actually written this scan. Steady state should be a handful. */
+  changed: number;
+  /** Nights dropped because the grid no longer lists them. */
+  removed: number;
   /** Nights that flipped booked -> free on this scan. The notifier's input. */
   opened: number;
   /** Nights that flipped free -> booked. Kept so a re-open is a fresh event. */
@@ -366,7 +370,7 @@ function allNightsFree(freeNights: Set<ISODate>, checkin: ISODate, nights: numbe
 /**
  * Scans currently running, keyed by facility id. Two people searching the same
  * campground — or a search overlapping a sweep — would otherwise both scan it:
- * duplicate requests out of a budget we can't afford, and two `replaceWindow`
+ * duplicate requests out of a budget we can't afford, and two `applyWindowDelta`
  * transactions racing over the same rows. The second caller waits on the first.
  */
 const inFlightScans = new Map<string, Promise<ScanSummary>>();
@@ -417,7 +421,8 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
   const previous = await availabilityRepository.listWindow(facility.id, toDate(start), toDate(end));
   const events = diffEvents(previous, slots);
 
-  await availabilityRepository.replaceWindow(facility.id, toDate(start), toDate(end), slots, events);
+  const delta = diffSlots(previous, slots);
+  await availabilityRepository.applyWindowDelta(facility.id, delta, events);
 
   // What the grid returned tells us what kind of campground this is. Units with
   // none bookable means first-come, first-served; no units at all means there
@@ -440,6 +445,8 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     sites: availability.sites.length,
     slots: slots.length,
     freeSlots: slots.filter((s) => s.isFree).length,
+    changed: delta.upserts.length,
+    removed: delta.removals.length,
     opened: events.filter((e) => e.type === "opened").length,
     closed: events.filter((e) => e.type === "closed").length,
     status,
@@ -458,6 +465,38 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
  * in the grid, and every day as a fresh date rolls into the booking window.
  * Treat those as opens and a new watch fires dozens of emails immediately.
  */
+/**
+ * What actually changed in a facility's window.
+ *
+ * A scan produces the whole window every time, but between two passes 25
+ * minutes apart almost none of it has moved. Writing only the difference keeps
+ * a steady-state scan to a handful of rows instead of thousands.
+ *
+ * `upserts` covers both new nights and nights whose availability (or site
+ * name) changed; `removals` covers nights that were stored but are no longer
+ * in the grid at all — a site retired, or a date that rolled out of view.
+ */
+function diffSlots(
+  previous: { unitId: number; unitName: string; date: Date; isFree: boolean }[],
+  next: SlotInput[],
+): { upserts: SlotInput[]; removals: { unitId: number; date: Date }[] } {
+  const before = new Map(previous.map((slot) => [slotKey(slot.unitId, slot.date), slot]));
+
+  const upserts: SlotInput[] = [];
+  for (const slot of next) {
+    const key = slotKey(slot.unitId, slot.date);
+    const was = before.get(key);
+    before.delete(key);
+    // Unchanged nights are the overwhelming majority; leave them alone.
+    if (was && was.isFree === slot.isFree && was.unitName === slot.unitName) continue;
+    upserts.push(slot);
+  }
+
+  // Whatever is left was stored but the grid no longer reports it.
+  const removals = [...before.values()].map(({ unitId, date }) => ({ unitId, date }));
+  return { upserts, removals };
+}
+
 function diffEvents(previous: { unitId: number; date: Date; isFree: boolean }[], next: SlotInput[]): EventInput[] {
   const before = new Map<string, boolean>();
   for (const slot of previous) before.set(slotKey(slot.unitId, slot.date), slot.isFree);

@@ -34,7 +34,18 @@ async function scan(facilityId: string, freeByDate: Record<string, boolean>) {
     return [{ unitId: slot.unitId, unitName: slot.unitName, date: slot.date, type: slot.isFree ? "opened" : "closed" } as const];
   });
 
-  await availabilityRepository.replaceWindow(facilityId, START, END, slots, events);
+  // Mirrors the service: only changed nights are written, and nights the grid
+  // no longer reports are removed.
+  const seen = new Set(slots.map((slot) => `${slot.unitId}:${slot.date.toISOString().slice(0, 10)}`));
+  const upserts = slots.filter((slot) => {
+    const was = before.get(`${slot.unitId}:${slot.date.toISOString().slice(0, 10)}`);
+    return was === undefined || was !== slot.isFree;
+  });
+  const removals = previous
+    .filter((p) => !seen.has(`${p.unitId}:${p.date.toISOString().slice(0, 10)}`))
+    .map(({ unitId, date }) => ({ unitId, date }));
+
+  await availabilityRepository.applyWindowDelta(facilityId, { upserts, removals }, events);
   return events.length;
 }
 

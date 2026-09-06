@@ -5,8 +5,14 @@
 // creating a watch on 20 campgrounds used to launch 20 self-paced loops and
 // burst to ~20 req/s. Callers can no longer opt out or stack up — they queue.
 
-/** Minimum gap between any two requests, process-wide. */
-export const REQUEST_INTERVAL_MS = 1000;
+/**
+ * Minimum gap between any two requests, process-wide.
+ *
+ * Overridable only so a local leak/load harness can drive thousands of
+ * requests through the real code path in minutes instead of hours. Never set
+ * it in production: 1s is the politeness budget everything else assumes.
+ */
+export const REQUEST_INTERVAL_MS = Number(process.env.RC_REQUEST_INTERVAL_MS) || 1000;
 
 /**
  * Most waiters we'll hold before refusing new work. At one release per second

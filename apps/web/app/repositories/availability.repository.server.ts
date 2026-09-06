@@ -19,7 +19,7 @@ export const availabilityRepository = {
   async listWindow(facilityId: string, windowStart: Date, windowEnd: Date) {
     return prisma.availabilitySlot.findMany({
       where: { facilityId, date: { gte: windowStart, lte: windowEnd } },
-      select: { unitId: true, date: true, isFree: true },
+      select: { unitId: true, unitName: true, date: true, isFree: true },
     });
   },
 
@@ -34,37 +34,67 @@ export const availabilityRepository = {
    * the window so the next scan treats everything as first-time discovery and
    * silently emits nothing — losing the opening for good.
    */
-  async replaceWindow(
+  /**
+   * Write only what changed in a facility's window.
+   *
+   * The old version deleted the whole window and re-inserted it — ~3,200 rows
+   * every scan for a mid-size campground, even when nothing had moved since
+   * the last pass 25 minutes earlier. That was wasteful on its own, and it put
+   * 22,400 bind parameters in a single statement: within Postgres's 65,535
+   * limit, but on the way to it for a big campground, and enough that Prisma
+   * held on to megabytes of serialised query per call.
+   *
+   * A steady-state scan now writes a handful of rows. Only a first scan, where
+   * every night is new, writes the whole window — and that is chunked.
+   */
+  async applyWindowDelta(
     facilityId: string,
-    windowStart: Date,
-    windowEnd: Date,
-    slots: SlotInput[],
+    delta: { upserts: SlotInput[]; removals: { unitId: number; date: Date }[] },
     events: EventInput[],
   ) {
-    return prisma.$transaction([
-      prisma.availabilitySlot.deleteMany({
-        where: { facilityId, date: { gte: windowStart, lte: windowEnd } },
-      }),
-      prisma.availabilitySlot.createMany({
-        data: slots.map((slot) => ({ ...slot, facilityId })),
-      }),
-      prisma.availabilityEvent.createMany({
-        data: events.map((event) => ({ ...event, facilityId })),
-      }),
-      prisma.facility.update({
-        where: { id: facilityId },
-        data: { lastScannedAt: new Date() },
-      }),
-    ]);
+    const { upserts, removals } = delta;
+    // Rewritten rows are deleted first, so an upsert is a delete plus an
+    // insert. That avoids one UPDATE per changed night, which would be a round
+    // trip each on a first scan.
+    const stale = [...removals, ...upserts.map(({ unitId, date }) => ({ unitId, date }))];
+
+    return prisma.$transaction(async (tx) => {
+      if (stale.length > 0) {
+        // Grouped by unit so the filter stays small: one clause per site with
+        // a list of nights, rather than one clause per night.
+        const byUnit = new Map<number, Date[]>();
+        for (const { unitId, date } of stale) {
+          const dates = byUnit.get(unitId) ?? [];
+          dates.push(date);
+          byUnit.set(unitId, dates);
+        }
+        await tx.availabilitySlot.deleteMany({
+          where: {
+            facilityId,
+            OR: [...byUnit.entries()].map(([unitId, dates]) => ({ unitId, date: { in: dates } })),
+          },
+        });
+      }
+
+      // Chunked: a first scan inserts the entire window, and one enormous
+      // statement is what caused the memory problem this replaced.
+      const CHUNK = 500;
+      for (let i = 0; i < upserts.length; i += CHUNK) {
+        await tx.availabilitySlot.createMany({
+          data: upserts.slice(i, i + CHUNK).map((slot) => ({ ...slot, facilityId })),
+        });
+      }
+
+      if (events.length > 0) {
+        await tx.availabilityEvent.createMany({
+          data: events.map((event) => ({ ...event, facilityId })),
+        });
+      }
+
+      await tx.facility.update({ where: { id: facilityId }, data: { lastScannedAt: new Date() } });
+    });
   },
 
-  /**
-   * Drop slots for nights that have already passed. Run as its own daily step,
-   * not per scan: `replaceWindow` only touches today onward, so past dates
-   * orphan at roughly 25k rows/day across the catalog. Trend data lives in
-   * AvailabilityEvent, which is why dropping these is not a loss.
-   */
-  /** The far edge of the window: rows the scanner will never rewrite again. */
   async deleteSlotsAfter(date: Date) {
     const { count } = await prisma.availabilitySlot.deleteMany({ where: { date: { gt: date } } });
     return count;
@@ -107,6 +137,11 @@ export const availabilityRepository = {
       },
       _count: { _all: true },
     });
+  },
+
+  /** Just the number. The admin panel polls every 10s and only shows a count. */
+  async countUnnotifiedOpenings() {
+    return prisma.availabilityEvent.count({ where: { type: "opened", notifiedAt: null } });
   },
 
   /**
