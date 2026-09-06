@@ -1,29 +1,31 @@
+import { HORIZON_DAYS } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
-import { HORIZON_DAYS } from "~/lib/limits";
 import { availabilityService } from "./availability.service.server";
+import { notificationService } from "./notification.service.server";
 
 /**
- * The scanner: one loop that repeatedly asks "what is most overdue?" and scans
- * it.
+ * The scanner: sweep every bookable campground, then send the mail.
  *
- * There is deliberately **no job queue**. Scan work is derivable — it is a pure
- * function of `Facility.lastScannedAt` — so a queue would be a second, drifting
- * copy of state we already store. Working straight off `lastScannedAt` gives us
- * three things for free:
+ * ```
+ * forever:
+ *   prune nights outside the 63-day window
+ *   scan every bookable campground   (writes slots and transition events)
+ *   run the notifier                 (emails whatever those scans opened up)
+ * ```
  *
- *  - **Crash recovery.** Campgrounds already scanned have a fresh timestamp and
- *    sort to the back, so a restart resumes exactly where it left off.
- *  - **Priority.** A newly watched campground has `lastScannedAt = null`, which
- *    sorts first, so it is picked next without a priority column.
- *  - **No collisions.** There are no discrete sweeps to overlap, so nothing has
- *    to be skipped or queued behind anything else.
+ * It scans **everything bookable**, not just watched campgrounds. That makes
+ * scan cost a function of the catalog (fixed, ~335) rather than of user count,
+ * which only grows — and it is why there is no priority, no freshness target
+ * and no queue here. Everything is scanned every pass, so "what is most
+ * overdue" has no meaning.
  *
- * It scans **every bookable campground**, not just watched ones. That makes scan
- * cost a function of the catalog (fixed, ~335) rather than of user count, which
- * only grows. Watched-only scanning costs more than this past ~170 watched
- * campgrounds, which is 10-20 users.
+ * The notifier is called at the end of a pass rather than running its own loop:
+ * a pass is exactly the unit of work that produces events, so there is nothing
+ * to poll for. If ReserveCalifornia blocks us the sweep stops and mail stops
+ * with it — deliberately. A 429 is an incident to fix, not a condition to route
+ * around, and the admin panel says so loudly.
  *
  * It runs in the web app's process on purpose: the rate gate that keeps us
  * under ReserveCalifornia's limit is per-process state, so a second container
@@ -31,43 +33,37 @@ import { availabilityService } from "./availability.service.server";
  */
 
 /**
- * Freshness target for every bookable campground.
- *
- * Measured at 4.07s per campground — three gated calls plus network and the
- * slot write — so ~335 bookable campgrounds is a ~23 minute cycle. 25 leaves
- * room for a newly created watch without pushing the cycle over.
+ * Only guards against a hot loop when there is nothing to scan. A pass with
+ * work in it is paced by the rate gate to ~23 minutes regardless, so this is
+ * not a tuning knob for cycle time.
  */
-const MAX_AGE_MS = 25 * 60 * 1000;
-/** Nothing overdue: wait before asking again. */
-const IDLE_SLEEP_MS = 30_000;
-/** After a failure, pause before the next pick so we don't spin on a bad row. */
-const ERROR_SLEEP_MS = 60_000;
-/** How often to drop slots for nights that have already passed. */
-const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const IDLE_SLEEP_MS = 60_000;
 
 export interface ScannerStatus {
   running: boolean;
   /** Campground currently being scanned, if any. */
   current: string | null;
-  /** Bookable campgrounds past their freshness target right now. */
-  overdue: number;
-  /** Worst staleness — the number that says whether we are keeping up. */
-  oldestScan: string | null;
+  /** Completed passes since start. */
+  cycleNumber: number;
+  lastCycleStartedAt: string | null;
+  /** How long the last full pass took — the number that says if we keep up. */
+  lastCycleDurationMs: number | null;
+  lastCycleScanned: number;
+  lastCycleFailed: number;
   /** How the catalog breaks down; only `bookable` is ever scanned. */
   byStatus: Record<string, number>;
-  /** Throughput over the last hour, derived from lastScannedAt. */
-  scannedLastHour: number;
 }
 
 let started = false;
 let current: string | null = null;
-let lastPruneAt = 0;
-/** Resolves the idle sleep early when new work appears. */
-let wake: (() => void) | null = null;
+let cycleNumber = 0;
+let lastCycleStartedAt: number | null = null;
+let lastCycleDurationMs: number | null = null;
+let lastCycleScanned = 0;
+let lastCycleFailed = 0;
 
 export const scannerService = {
   start,
-  nudge,
   getStatus,
 };
 
@@ -78,87 +74,91 @@ function start(): void {
     return;
   }
   started = true;
-  logger.info(
-    { action: "scanner.start", maxAgeMinutes: MAX_AGE_MS / 60000 },
-    "scanner started",
-  );
+  logger.info({ action: "scanner.start", horizonDays: HORIZON_DAYS }, "scanner started");
   void loop();
 }
 
-/**
- * Cut the idle wait short. Called when a watch is created so its campgrounds
- * are picked up in seconds rather than up to IDLE_SLEEP_MS later.
- */
-function nudge(): void {
-  wake?.();
-}
-
 async function getStatus(): Promise<ScannerStatus> {
-  const now = Date.now();
-  const [overdue, oldest, scannedLastHour, byStatus] = await Promise.all([
-    facilityRepository.countOverdue({ scannedBefore: new Date(now - MAX_AGE_MS) }),
-    facilityRepository.findOldestScan(),
-    facilityRepository.countScannedSince(new Date(now - 60 * 60 * 1000)),
-    facilityRepository.countByStatus(),
-  ]);
-
   return {
     running: started,
     current,
-    overdue,
-    oldestScan: oldest?.lastScannedAt?.toISOString() ?? null,
-    scannedLastHour,
-    byStatus,
+    cycleNumber,
+    lastCycleStartedAt: lastCycleStartedAt ? new Date(lastCycleStartedAt).toISOString() : null,
+    lastCycleDurationMs,
+    lastCycleScanned,
+    lastCycleFailed,
+    byStatus: await facilityRepository.countByStatus(),
   };
 }
 
-/** The most overdue bookable campground, nulls (never scanned) first. */
-async function pickNext() {
-  return facilityRepository.findMostOverdue({ scannedBefore: new Date(Date.now() - MAX_AGE_MS) });
-}
-
 async function loop(): Promise<void> {
-  // Runs for the life of the process. Every error is contained per iteration so
-  // one bad campground can never stop the scanner.
+  // Runs for the life of the process. A pass is wrapped whole so one bad
+  // campground can never stop the scanner.
   for (;;) {
     try {
-      await pruneIfDue();
-
-      const facility = await pickNext();
-      if (!facility) {
-        await sleep(IDLE_SLEEP_MS);
-        continue;
-      }
-
-      current = facility.name;
-      // scanFacility writes lastScannedAt, which is what takes this campground
-      // out of the overdue set — so a failure leaves it overdue and it will be
-      // retried, but behind everything else that is also overdue.
-      await availabilityService.scanFacility(facility.id);
+      await runCycle();
     } catch (err) {
-      logger.warn({ action: "scanner.iteration_failed", facility: current, err }, "scanner iteration failed");
-      await sleep(ERROR_SLEEP_MS);
+      logger.error({ action: "scanner.cycle_failed", err }, "scan cycle failed");
+    }
+    await sleep(IDLE_SLEEP_MS);
+  }
+}
+
+async function runCycle(): Promise<void> {
+  const startedAt = Date.now();
+  lastCycleStartedAt = startedAt;
+
+  await prune();
+
+  const facilities = await facilityRepository.listBookable();
+  let scanned = 0;
+  let failed = 0;
+
+  for (const facility of facilities) {
+    current = facility.name;
+    try {
+      await availabilityService.scanFacility(facility.id);
+      scanned++;
+    } catch (err) {
+      // Left for the next pass. A failure costs freshness, not correctness —
+      // the stored window simply keeps the values it already had.
+      logger.warn({ action: "scanner.facility_failed", facilityId: facility.id, err }, "facility scan failed");
+      failed++;
     } finally {
       current = null;
     }
   }
+
+  cycleNumber++;
+  lastCycleScanned = scanned;
+  lastCycleFailed = failed;
+  lastCycleDurationMs = Date.now() - startedAt;
+  logger.info(
+    { action: "scanner.cycle_complete", cycleNumber, scanned, failed, durationMs: lastCycleDurationMs },
+    "scan cycle complete",
+  );
+
+  // The pass is what produces events, so this is the moment to send. Contained
+  // separately: a mail problem must not stop the next sweep.
+  try {
+    const result = await notificationService.runOnce();
+    if (result.emails > 0) logger.info({ action: "scanner.notified", ...result }, "notifier ran after cycle");
+  } catch (err) {
+    logger.error({ action: "scanner.notify_failed", err }, "notifier failed after cycle");
+  }
 }
 
 /**
- * Drop slots outside the scanned window, on **both** sides.
+ * Drop nights outside the scanned window, on **both** sides.
  *
- * `replaceWindow` only rewrites the range it replaces, so anything outside it
- * is never updated and never removed. Past nights orphan at the near edge, and
- * shrinking the window to 63 days stranded ~985k rows at the far edge — a third
- * of them marked free, which search and the calendar would have shown as
- * current. The far-edge prune is not a one-off: every scan strands another day.
+ * `replaceWindow` only deletes the range it replaces, so anything outside it is
+ * never updated *and* never removed. Past nights orphan at the near edge, and
+ * the far edge strands another day every time the window slides forward — which
+ * is why this runs every pass rather than being a one-off cleanup.
  *
  * Trend data lives in AvailabilityEvent, so dropping slots is not a loss.
  */
-async function pruneIfDue(): Promise<void> {
-  if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
-  lastPruneAt = Date.now();
-
+async function prune(): Promise<void> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const horizon = new Date(today);
@@ -175,14 +175,7 @@ async function pruneIfDue(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(finish, ms);
+    const timer = setTimeout(resolve, ms);
     timer.unref?.();
-    wake = finish;
-
-    function finish() {
-      clearTimeout(timer);
-      wake = null;
-      resolve();
-    }
   });
 }

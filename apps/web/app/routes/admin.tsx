@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 
-import { Alert } from "@campingmeow/ui/components/alert";
+import { Alert, AlertTitle } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@campingmeow/ui/components/card";
 import { Separator } from "@campingmeow/ui/components/separator";
@@ -47,7 +47,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Active watches", value: dashboard.stats.watchCount },
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
     { label: "Requests queued", value: dashboard.queueDepth },
-    { label: "Scanned / hr", value: scanner.scannedLastHour },
+    { label: "Cycle (min)", value: scanner.lastCycleDurationMs === null ? "—" : Math.round(scanner.lastCycleDurationMs / 60000) },
     { label: "Emails today", value: notifier.emailsSentToday },
   ];
 
@@ -100,8 +100,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
 
             {dashboard.rateLimit.blocked && (
               <Alert variant="destructive" className="mb-3">
-                ReserveCalifornia has rate-limited us. Scanning is paused until{" "}
-                {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
+                <AlertTitle>Blocked by ReserveCalifornia</AlertTitle>
+                Scanning <strong>and email</strong> are stopped until {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
+                {notifier.pendingEvents > 0 && ` ${notifier.pendingEvents} openings are waiting to be sent.`} This is an incident,
+                not a hiccup — a 429 means we exceeded their rate limit and the block can last hours.
               </Alert>
             )}
 
@@ -109,16 +111,22 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               <div>
                 <dt className="text-muted-foreground">Status</dt>
                 <dd className="font-medium">
-                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Idle — nothing overdue"}
+                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Between cycles"}
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Overdue</dt>
-                <dd className="font-medium tabular-nums">{scanner.overdue}</dd>
+                <dt className="text-muted-foreground">Last cycle</dt>
+                <dd className="font-medium tabular-nums">
+                  {scanner.lastCycleDurationMs === null
+                    ? "in progress"
+                    : `${Math.round(scanner.lastCycleDurationMs / 60000)} min · ${scanner.lastCycleScanned} scanned${
+                        scanner.lastCycleFailed > 0 ? ` · ${scanner.lastCycleFailed} failed` : ""
+                      }`}
+                </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Oldest scan</dt>
-                <dd className="font-medium">{scanner.oldestScan ? timeAgo(scanner.oldestScan) : "never"}</dd>
+                <dt className="text-muted-foreground">Cycles completed</dt>
+                <dd className="font-medium tabular-nums">{scanner.cycleNumber}</dd>
               </div>
               <div className="col-span-2">
                 <dt className="text-muted-foreground">Catalog</dt>
@@ -130,7 +138,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             </dl>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              A rising overdue count or an oldest scan past its target means we are not keeping up.
+              A cycle that keeps growing means we are falling behind — every campground is scanned every pass, so the duration is
+              the whole story.
             </p>
 
             <recheck.Form method="post" action="/api/recheck-facilities" className="mt-3">
@@ -151,7 +160,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <dt className="text-muted-foreground">Notifier</dt>
-                <dd className="font-medium">{notifier.running ? "Running (every 10 min)" : "Stopped"}</dd>
+                <dd className="font-medium">Runs after each scan cycle</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Email via</dt>
@@ -197,13 +206,5 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   );
 }
 
-function timeAgo(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";

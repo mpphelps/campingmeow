@@ -11,7 +11,7 @@ import { ValidationError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
 import type { AuthUser } from "~/services/auth.service.server";
 import { catalogService, type FacilityPickerItem } from "~/services/catalog.service.server";
-import { watchOrchestratorService } from "~/services/watch-orchestrator.service.server";
+import { watchService } from "~/services/watch.service.server";
 
 const DAYS = [
   { value: 0, label: "Sun" },
@@ -49,7 +49,7 @@ export const loader = withAuth(async ({ request }: Route.LoaderArgs & { user: Au
 export const action = withAuth(async ({ request, user }: Route.ActionArgs & { user: AuthUser }) => {
   const formData = await request.formData();
   try {
-    await watchOrchestratorService.createWatchAndScan(user.id, {
+    await watchService.createWatch(user.id, {
       facilityIds: formData.getAll("facilityIds").map(String),
       checkinDays: formData.getAll("checkinDays").map(Number),
       nights: Number(formData.get("nights")),

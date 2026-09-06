@@ -14,7 +14,7 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 5b. **Search reads our database only.** Users can check availability for selected campgrounds and a date pattern without creating a watch. Search **never calls ReserveCalifornia** — it is one indexed query, so it answers in ~200ms no matter how many people search at once. It is explicitly a snapshot, not live: every result shows when it was last updated, and a campground never scanned says so rather than reporting "nothing open". Live refresh-on-search was removed deliberately — at 9 requests per campground it made searches compete with the scanner for the one budget that matters, and got unusable at a handful of concurrent users.
 6. **Notifications.** Email only, via **Resend** (3,000/month, 100/day free) behind a small sender interface — tests use a logging stub, and swapping to Brevo or SES is one adapter. Sent when a night flips unavailable → available and completes a stay the watch wants. No repeat emails while it stays open. Email links to ReserveCalifornia. Missing `RESEND_API_KEY` degrades to the stub rather than crashing, and says so loudly in the log and the admin panel.
 7. **Politeness.** One request every **1 second**, matching camply (`juftin/camply`), which has run against this API for years at that rate. Enforced by a **global rate gate** in `packages/scanner` that every request queues at, so the rate is a property of the process and no amount of concurrency can raise it — only lengthen the queue. Concurrent scans of the same campground are deduplicated rather than run twice. A 429 or 403 trips a circuit breaker that stops all scanning until the block expires; we never retry one, because retrying deepens the penalty — a 15-minute-to-several-hour IP blacklist that takes the whole app down, not just the scan. Caveat: camply spreads its load over thousands of users' IPs in short bursts where we are one Pi running continuously, so 1s is a ceiling, not a target. See `packages/scanner/API.md` §4b.
-8. **Monitoring.** Track scanner **cycle time** (how long a full pass takes — the number that says whether we are keeping up), worst-case staleness (oldest scan), throughput (campgrounds scanned per hour), and emails sent per day. A rising backlog or an oldest-scan past its target means we are falling behind and will start missing cancellations.
+8. **Monitoring.** Track scanner **cycle time** (how long a full pass takes — the number that says whether we are keeping up), campgrounds scanned and failed per pass, and emails sent per day. A cycle time that climbs means we are falling behind and will start missing cancellations. A 429 from ReserveCalifornia is an incident, not a metric: it stops scanning and mail together, and admin raises it as such.
 9. **Admin panel.** Admin-only page: list users, see each user's watches, remove/ban users, run a catalog sync, and read scanner health — status, backlog, worst staleness, throughput. There are no sweep buttons: the scanner picks its own work, so there is nothing to start or stop.
 9b. **Endpoints that spend an external budget require an account.** Browsing parks and reading stored availability is public — neither costs us anything outside our own database. `/api/geocode` (OpenStreetMap Nominatim) returns 401 to anonymous callers, because per-request caps bound one request, not how many a stranger opens at once.
 10. **RBAC.** Two roles, `admin` and `user`, carried in Auth0 JWT claims and checked in the service layer (same pattern as auth today).
@@ -43,7 +43,7 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 - **AvailabilityEvent** — facility, unit, night, `opened`/`closed`, `detectedAt`, `notifiedAt`. Append-only log of transitions, written inside the same transaction that overwrites the slots. A night with **no previous row produces no event** — going from "no data" to "40 free nights" is discovery, not 40 openings (first scan of a campground, a new site in the grid, a date rolling into the window). `notifiedAt` makes it a durable outbox: if email is down, events stay unnotified and go out next pass. Also the trend source, which is why pruning past slots is not a loss.
 - **UserPreference** — per user: `emailNotifications`, plus an `unsubscribeToken`. The token is a stored random value rather than a signature on purpose: an unsubscribe link must never expire (a dead one gets reported as spam instead), must be revocable by regenerating it, and must survive a `SESSION_SECRET` rotation.
 - **EmailLog** — one row per notification batch: `sentAt`, `quantity`, and a JSON `{ userId: [eventId] }` map. The emails-per-day metric.
-- *(No job or sweep table.)* Scanner health is derived from `Facility.lastScannedAt`: backlog is the count past its freshness target, throughput is the count scanned in the last hour, and worst-case staleness is the oldest timestamp. A jobs table would be a second, drifting copy of state we already keep.
+- *(No job or sweep table.)* The scanner sweeps the whole catalog every pass, so there is no work to schedule and nothing to record. Health is the duration of the last pass, held in memory. A jobs table would be a second, drifting copy of state we already keep.
 
 ## 4. Scanner design
 
@@ -51,10 +51,15 @@ CampingMeow helps people grab hard-to-get California state park campsites. Users
 priorities, no watched/unwatched distinction.
 
 ```
-pickNext():
-  the campground whose window is most overdue -> oldest first
-  nothing overdue -> sleep
+forever:
+  prune nights outside the 63-day window
+  scan every bookable campground   (writes slots and transition events)
+  run the notifier                 (emails whatever those scans opened up)
 ```
+
+Because every campground is scanned every pass, there is no freshness target,
+no "most overdue" ordering and no queue — those were relics of tiered scanning.
+Cycle duration is the only health metric that means anything.
 
 ### Why one flat loop
 
@@ -77,8 +82,9 @@ Everything downstream gets simpler: no demand classes, no horizon tiers, no
 - Only `bookable` campgrounds are scanned. 177 of ~512 are not (see §3).
 - Measured **4.07s per campground** (3 gated calls plus network and the slot write), so 335 x 4.07s = **~23 minutes** per cycle. The naive `3 calls x 1s = 3s` figure is optimistic; latency does not overlap the gate wait.
 
-Freshness target is **25 minutes**, a little above the measured cycle so a newly
-created watch can be scanned without pushing the cycle over.
+There is no freshness target to miss: a campground is as stale as the pass it
+was scanned in, and the pass is the whole catalog. If cycle duration climbs, the
+cause is the rate gate or the catalog size, and both are visible in admin.
 
 ### Status classification
 
@@ -100,7 +106,7 @@ window is never updated *and* never removed. With a 63-day window that stranded
 **984,555 rows**, a third of them marked free — six-month-old data that search
 and the calendar would have shown as current.
 
-The daily prune therefore deletes on **both sides**: nights before today, and
+The prune therefore runs every pass and deletes on **both sides**: nights before today, and
 nights beyond `today + 63`. This is not a one-off cleanup; every scan strands
 another day at the far edge.
 
@@ -124,14 +130,23 @@ full window well. For anyone who wants faster or broader scanning than one
 shared IP can offer, we link to camply (`juftin/camply`), which runs on their
 machine with their own budget. Both are truthful answers, not apologies.
 
-### Properties that come for free
+### Notifications ride the sweep
 
-- **No job queue.** Scan work is derivable from `Facility.lastScannedAt`, so a
-  queue would be a second copy of state we already store.
-- **Crash recovery.** Scanned campgrounds have a fresh timestamp and sort to the
-  back, so a restart resumes where it left off.
-- **Priority.** A newly watched campground has `lastScannedAt = null`, which
-  sorts first. Creating a watch only nudges the loop awake early.
+The notifier is called at the end of each pass rather than running its own
+loop. A pass is exactly the unit of work that produces events, so there is
+nothing to poll for, and one run per pass is what batches a user's openings
+into a single email instead of one per campground.
+
+If ReserveCalifornia blocks us, the sweep stops and mail stops with it. That is
+deliberate: a 429 is an incident to fix, not a condition to route around, and
+the admin panel raises it as one — naming that email is stopped too, and how
+many openings are waiting.
+
+### Other properties
+
+- **No job queue.** Nothing to schedule: the work is "all of them, in order".
+- **Crash recovery.** A restart begins a fresh pass. Nothing is lost, because
+  the slots are rewritten from scratch each time anyway.
 - **Runs in the web app's process, not its own container.** The rate gate that
   keeps us under ReserveCalifornia's limit is per-process state, so a second
   container would get its own gate and silently double our request rate.

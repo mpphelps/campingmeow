@@ -49,11 +49,12 @@ test.describe("admin dashboard", () => {
     const statusValue = page.locator("dt", { hasText: /^Status$/ }).locator("xpath=following-sibling::dd[1]");
     await expect(statusValue).toHaveText("Stopped"); // DISABLE_SCANNER=1 in tests
 
-    // The scanner no longer distinguishes watched from unwatched — it sweeps
-    // every bookable campground, so there is one overdue count, not two.
-    const overdue = page.locator("dt", { hasText: /^Overdue$/ }).locator("xpath=following-sibling::dd[1]");
-    await expect(overdue).toHaveText("1");
+    // Every bookable campground is scanned every pass, so cycle duration is the
+    // health metric — there is no staleness or backlog to report.
+    const lastCycle = page.locator("dt", { hasText: /^Last cycle$/ }).locator("xpath=following-sibling::dd[1]");
+    await expect(lastCycle).toHaveText("in progress"); // DISABLE_SCANNER=1, so no cycle has run
     await expect(page.getByText("1 bookable · 0 no inventory · 0 first-come")).toBeVisible();
+    await expect(page.getByText("Runs after each scan cycle")).toBeVisible();
 
     const table = page.locator("table");
     const adminRow = table.locator("tr", { hasText: "admin@example.com" });

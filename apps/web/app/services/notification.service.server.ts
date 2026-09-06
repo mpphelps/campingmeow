@@ -9,25 +9,22 @@ import { preferenceService } from "./preference.service.server";
 /**
  * Turns "a night opened" into "you have mail".
  *
- * Runs on its own loop rather than hanging off a scan: the scanner has no
- * discrete sweeps to finish, and batching is the point — a user watching 20
- * campgrounds would otherwise get 20 separate emails as the scanner works
- * through them.
+ * Called by the scanner at the end of a sweep, not on a loop of its own. A
+ * sweep is exactly the unit of work that produces events, so there is nothing
+ * to poll for — and running once per sweep is what batches a user's openings
+ * into one email instead of one per campground.
  *
  * `AvailabilityEvent.notifiedAt` makes this a durable outbox. Events are only
  * stamped after a send succeeds, so a provider outage delays mail instead of
  * losing it.
  */
 
-/** How often to look for openings to report. */
-const INTERVAL_MS = 10 * 60 * 1000;
 /** Most events to process in one pass, so a backlog can't email the world at once. */
 const BATCH_LIMIT = 500;
 /** Longest stay a watch can ask for; bounds how far around an opening we look. */
 const MAX_NIGHTS = 7;
 
 export interface NotifierStatus {
-  running: boolean;
   /** How the mail actually goes out — "stub" here in production means misconfigured. */
   sender: string;
   pendingEvents: number;
@@ -50,24 +47,12 @@ interface Match {
   nights: number;
 }
 
-let started = false;
 
 export const notificationService = {
-  start,
   runOnce,
   getStatus,
 };
 
-function start(): void {
-  if (started) return;
-  if (process.env.DISABLE_NOTIFIER === "1") {
-    logger.info({ action: "notifier.disabled" }, "notifier disabled by DISABLE_NOTIFIER");
-    return;
-  }
-  started = true;
-  logger.info({ action: "notifier.start", intervalMinutes: INTERVAL_MS / 60000, sender: emailSender.name }, "notifier started");
-  void loop();
-}
 
 async function getStatus(): Promise<NotifierStatus> {
   const midnight = new Date();
@@ -76,19 +61,9 @@ async function getStatus(): Promise<NotifierStatus> {
     availabilityRepository.listUnnotifiedOpenings(BATCH_LIMIT),
     emailLogRepository.countSentSince(midnight),
   ]);
-  return { running: started, sender: emailSender.name, pendingEvents: pending.length, emailsSentToday };
+  return { sender: emailSender.name, pendingEvents: pending.length, emailsSentToday };
 }
 
-async function loop(): Promise<void> {
-  for (;;) {
-    try {
-      await runOnce();
-    } catch (err) {
-      logger.error({ action: "notifier.pass_failed", err }, "notifier pass failed");
-    }
-    await sleep(INTERVAL_MS);
-  }
-}
 
 /**
  * One pass: claim unreported openings, work out who wanted them, send one
@@ -270,9 +245,3 @@ function dayOfWeekIndex(date: ISODate): number {
   return DAY_INDEX[dayOfWeek(date)]!;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}

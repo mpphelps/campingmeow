@@ -79,54 +79,18 @@ export const facilityRepository = {
     });
   },
 
-  /**
-   * The single query the scanner runs to decide what to do next: the most
-   * overdue campground, nulls (never scanned) first.
-   *
-   */
-  /**
-   * The single query the scanner runs to decide what to do next: the most
-   * overdue bookable campground, nulls (never scanned) first.
-   *
-   * There is no watched/unwatched distinction any more. Scanning everything
-   * makes scan cost a function of the catalog, which is fixed, rather than of
-   * user count, which is not.
-   */
-  async findMostOverdue(options: { scannedBefore: Date }) {
-    return prisma.facility.findFirst({
-      where: {
-        active: true,
-        status: "bookable",
-        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
-      },
-      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
+  /** The one query the sweep needs: everything worth scanning, in a stable order. */
+  async listBookable() {
+    return prisma.facility.findMany({
+      where: { active: true, status: "bookable" },
+      select: { id: true, name: true },
+      orderBy: { id: "asc" },
     });
   },
 
   /** How many campgrounds are past their freshness target — the backlog size. */
-  async countOverdue(options: { scannedBefore: Date }) {
-    return prisma.facility.count({
-      where: {
-        active: true,
-        status: "bookable",
-        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
-      },
-    });
-  },
 
-  /** Worst staleness in the catalog: the health number that actually matters. */
-  async findOldestScan() {
-    return prisma.facility.findFirst({
-      where: { active: true, status: "bookable" },
-      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
-      select: { name: true, lastScannedAt: true },
-    });
-  },
 
-  /** Campgrounds scanned since `since` — throughput, derived not counted. */
-  async countScannedSince(since: Date) {
-    return prisma.facility.count({ where: { lastScannedAt: { gte: since } } });
-  },
 
   async listActiveByParkId(parkId: string) {
     return prisma.facility.findMany({
