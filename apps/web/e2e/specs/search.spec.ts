@@ -115,7 +115,7 @@ test.describe("search page — results from stored availability", () => {
     await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
 
     await expect(page.getByText("so there's nothing to search", { exact: false })).toBeVisible();
-    await expect(page.getByText("No data yet — a watch will start the first scan.")).toBeVisible();
+    await expect(page.getByText("No data yet — this campground is in the next sweep.")).toBeVisible();
     await expect(page.getByText("not scanned yet")).toBeVisible();
     await expect(page.getByText("We haven't scanned these campgrounds yet.")).toBeVisible();
   });

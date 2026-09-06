@@ -202,15 +202,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }, [parks, query, origin, radius]);
 
   /**
-   * Every selected campground costs ~10 seconds of ReserveCalifornia requests,
-   * so selection is capped rather than letting someone tick all 500 and queue
-   * over an hour of continuous scanning.
+   * Selecting campgrounds costs us nothing to scan — the sweep covers all of
+   * them regardless. The cap keeps one watch comprehensible, and bounds how
+   * much a single email can be about. See MAX_WATCH_FACILITIES in lib/limits.
    */
   function capped(next: Set<string>, previous: Set<string>): Set<string> {
     if (next.size <= MAX_WATCH_FACILITIES) return next;
     toast({
       title: `That's the limit — ${MAX_WATCH_FACILITIES} campgrounds`,
-      description: "We check each one live against ReserveCalifornia. Search or watch these, then come back for more.",
+      description: "That's as much as one watch can cover. Search or watch these, then come back for more.",
       variant: "destructive",
     });
     return previous;
@@ -280,8 +280,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             Find open California campsites
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[#F2E4CC]/70">
-            Pick the parks or campgrounds you want, then search what&apos;s open right now — or set up a watch and we&apos;ll
-            email you the moment ReserveCalifornia has a matching opening.
+            The good sites are gone the day booking opens. But people cancel constantly, and those sites go back on
+            ReserveCalifornia with nobody watching. We watch instead — every bookable state park campground, for the next
+            nine weeks — and email you when one matches the dates you want.
           </p>
         </div>
       </div>

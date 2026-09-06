@@ -1,8 +1,8 @@
 /**
- * The availability search is addressed entirely by its query string, so both
- * the page (`/search`) and its progress stream (`/api/search-progress`) read
- * the same params. Parsing lives here so the two can never drift apart and
- * refresh a different search than the one on screen.
+ * The availability search is addressed entirely by its query string: the page
+ * is shareable, bookmarkable and reloadable, and the form is just a way to
+ * write the URL. Parsing lives here rather than inline in the loader so the
+ * shape of a search stays one thing, described in one place.
  */
 export interface SearchCriteria {
   /** 0=Sun .. 6=Sat */

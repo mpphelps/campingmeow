@@ -93,7 +93,7 @@ test.describe("watches", () => {
   test("shows an empty state when the user has no watches", async ({ page }) => {
     await page.goto("/watches");
     await expect(page.getByText("No watches yet.")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Browse parks" })).toHaveAttribute("href", "/parks");
+    await expect(page.getByRole("link", { name: "Browse parks" })).toHaveAttribute("href", "/");
   });
 
   test("deletes a watch and removes it from the list", async ({ page }) => {

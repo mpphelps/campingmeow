@@ -10,6 +10,7 @@ import { List, ListItem } from "@campingmeow/ui/components/list";
 import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
 import type { Route } from "./+types/search";
 import { ValidationError } from "~/lib/errors";
+import { HORIZON_DAYS } from "~/lib/limits";
 import { parseSearchParams } from "~/lib/search-params";
 import { availabilityService } from "~/services/availability.service.server";
 import { catalogService } from "~/services/catalog.service.server";
@@ -31,9 +32,15 @@ export async function loader({ request }: Route.LoaderArgs) {
   const facilities = await catalogService.listFacilityPicker({ facilityIds });
   if (facilities.length === 0) throw new Response("Not Found", { status: 404 });
 
+  // Bounds for the date inputs. The server rejects out-of-range dates anyway —
+  // these just stop the picker offering days we have no data for.
+  const now = new Date();
+  const today = iso(now);
+  const horizon = iso(new Date(now.getTime() + HORIZON_DAYS * 86_400_000));
+
   // No search run yet — just show the form.
   if (!hasQuery) {
-    return { facilities, results: null, criteria, fields: undefined };
+    return { facilities, results: null, criteria, fields: undefined, today, horizon };
   }
 
   try {
@@ -46,17 +53,17 @@ export async function loader({ request }: Route.LoaderArgs) {
       startDate: criteria.startDate,
       endDate: criteria.endDate,
     });
-    return { facilities, results, criteria, fields: undefined };
+    return { facilities, results, criteria, fields: undefined, today, horizon };
   } catch (err) {
     if (err instanceof ValidationError) {
-      return { facilities, results: null, criteria, fields: err.fields };
+      return { facilities, results: null, criteria, fields: err.fields, today, horizon };
     }
     throw err;
   }
 }
 
 export default function Search({ loaderData }: Route.ComponentProps) {
-  const { facilities, results, criteria, fields } = loaderData;
+  const { facilities, results, criteria, fields, today, horizon } = loaderData;
   const navigation = useNavigation();
   const searching = navigation.state === "loading";
   const [bounds, setBounds] = useState<"anytime" | "range">(criteria.bounds);
@@ -142,14 +149,30 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                 <Label htmlFor="from">
                   Earliest check-in
                 </Label>
-                <Input id="from" name="from" type="date" defaultValue={criteria.startDate ?? ""} className="mt-2" />
+                <Input
+                  id="from"
+                  name="from"
+                  type="date"
+                  min={today}
+                  max={horizon}
+                  defaultValue={criteria.startDate ?? ""}
+                  className="mt-2"
+                />
                 {fields?.startDate && <p className="mt-1 text-sm text-destructive">{fields.startDate}</p>}
               </div>
               <div>
                 <Label htmlFor="to">
                   Latest check-in
                 </Label>
-                <Input id="to" name="to" type="date" defaultValue={criteria.endDate ?? ""} className="mt-2" />
+                <Input
+                  id="to"
+                  name="to"
+                  type="date"
+                  min={today}
+                  max={horizon}
+                  defaultValue={criteria.endDate ?? ""}
+                  className="mt-2"
+                />
                 {fields?.endDate && <p className="mt-1 text-sm text-destructive">{fields.endDate}</p>}
               </div>
             </div>
@@ -185,8 +208,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 
           {results.unscanned.length > 0 && (
             <Alert variant="warning" className="mt-3">
-              We haven&apos;t scanned {results.unscanned.join(", ")} yet, so there&apos;s nothing to search. Create a watch and
-              we&apos;ll start tracking {results.unscanned.length === 1 ? "it" : "them"} right away.
+              We haven&apos;t scanned {results.unscanned.join(", ")} yet, so there&apos;s nothing to search yet.{" "}
+              {results.unscanned.length === 1 ? "It's" : "They're"} in the next sweep — set a watch and we&apos;ll email you
+              what turns up.
             </Alert>
           )}
 
@@ -203,7 +227,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
                   <p className="mt-2 text-sm text-muted-foreground">
                     {facility.lastScannedAt
                       ? "Nothing open for this pattern as of the last sweep."
-                      : "No data yet — a watch will start the first scan."}
+                      : "No data yet — this campground is in the next sweep."}
                   </p>
                 ) : (
                   <List className="mt-2">
@@ -244,6 +268,10 @@ export default function Search({ loaderData }: Route.ComponentProps) {
 }
 
 
+
+function iso(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
 
 function timeAgo(iso: string): string {
   const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);

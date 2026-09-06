@@ -146,9 +146,18 @@ function parseSearch(input: SearchOpeningsInput): SearchQuery {
   else if (facilityIds.length > MAX_SEARCH_FACILITIES)
     fields.facilityIds = `Pick at most ${MAX_SEARCH_FACILITIES} campgrounds at a time (you picked ${facilityIds.length}).`;
 
+  // We only hold HORIZON_DAYS of nights, so a date past it can't be answered.
+  // Silently clamping would report "nothing available" for a window we never
+  // looked at, which reads as "booked solid" — the worst thing we could say.
   const today = fmt(new Date());
+  const horizon = addDays(today, HORIZON_DAYS);
+  if (input.startDate && input.startDate > horizon)
+    fields.startDate = `We only track the next ${HORIZON_DAYS} days (through ${horizon}).`;
+  if (input.endDate && input.endDate > horizon)
+    fields.endDate = `We only track the next ${HORIZON_DAYS} days (through ${horizon}).`;
+
   const windowStart = input.startDate && input.startDate > today ? input.startDate : today;
-  const windowEnd = input.endDate ?? addDays(today, HORIZON_DAYS);
+  const windowEnd = input.endDate ?? horizon;
   if (windowEnd < windowStart) fields.endDate = "End date must be on or after the start date.";
 
   if (Object.keys(fields).length > 0) throw new ValidationError(fields);

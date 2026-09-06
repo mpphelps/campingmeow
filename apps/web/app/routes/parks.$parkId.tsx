@@ -18,7 +18,7 @@ export default function ParkDetail({ loaderData }: Route.ComponentProps) {
 
   return (
     <div>
-      <Link to="/parks" className="text-sm text-muted-foreground hover:text-foreground">
+      <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">
         ← All parks
       </Link>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">{park.name}</h1>
