@@ -89,7 +89,8 @@ export const facilityRepository = {
   async listBookable() {
     return prisma.facility.findMany({
       where: { active: true, status: "bookable" },
-      select: { id: true, name: true, park: { select: { name: true } } },
+      // lastScannedAt is how a resumed cycle knows what it already covered.
+      select: { id: true, name: true, lastScannedAt: true, park: { select: { name: true } } },
       // By park, then name. Ordering by the cuid primary key was stable but
       // looked random on the admin panel, which made a sweep impossible to
       // follow — you could not tell progress from thrashing.
