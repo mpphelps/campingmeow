@@ -10,8 +10,9 @@ import {
 } from "@campingmeow/scanner";
 import type { FacilityStatus } from "@campingmeow/database";
 import { ValidationError } from "~/lib/errors";
+import { distanceMiles } from "~/lib/geo";
 import { toSiteTypes, type SiteType } from "~/lib/site-types";
-import { HORIZON_DAYS, MAX_SEARCH_FACILITIES } from "~/lib/limits";
+import { HORIZON_DAYS } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import {
   availabilityRepository,
@@ -19,6 +20,7 @@ import {
   type SlotInput,
 } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
+import { parkRepository } from "../repositories/park.repository.server";
 import { authService, type AuthUser } from "./auth.service.server";
 import { ADMIN_PERMISSION } from "./admin.service.server";
 
@@ -85,6 +87,7 @@ export interface ScanSummary {
 //   Read path : answer searches from storage. Never calls ReserveCalifornia.
 export const availabilityService = {
   searchOpenings,
+  findNearby,
   recheckNonBookable,
   getFacilityCalendar,
   getWatchCalendar,
@@ -143,10 +146,10 @@ function parseSearch(input: SearchOpeningsInput): SearchQuery {
   if (!Number.isInteger(input.nights) || input.nights < 1 || input.nights > 7)
     fields.nights = "Nights must be between 1 and 7.";
 
+  // No upper bound: this is one indexed query against our own database, and
+  // the catalog itself (~500 campgrounds) is the only ceiling that matters.
   const facilityIds = [...new Set(input.facilityIds)];
   if (facilityIds.length === 0) fields.facilityIds = "Pick at least one campground.";
-  else if (facilityIds.length > MAX_SEARCH_FACILITIES)
-    fields.facilityIds = `Pick at most ${MAX_SEARCH_FACILITIES} campgrounds at a time (you picked ${facilityIds.length}).`;
 
   // We only hold HORIZON_DAYS of nights, so a date past it can't be answered.
   // Silently clamping would report "nothing available" for a window we never
@@ -479,4 +482,147 @@ function slotKey(unitId: number, date: Date): string {
 
 function toDate(iso: ISODate): Date {
   return new Date(`${iso}T00:00:00Z`);
+}
+
+/**
+ * "I want to go camping — where can I go?"
+ *
+ * One row per campground within the radius, one column per night in the
+ * scanned window, and a count of how many sites are free on each. The counting
+ * happens in Postgres; a wide radius is ~9,500 aggregated rows rather than the
+ * ~70,000 raw slots behind them.
+ *
+ * A cell means **one site free that night**. It deliberately says nothing about
+ * consecutive nights: two green cells side by side can be two different sites,
+ * so a two-night stay is not implied. The UI says so out loud rather than
+ * letting a run of green promise something we have not checked.
+ */
+export interface NearbyInput {
+  latitude: number;
+  longitude: number;
+  radiusMiles: number;
+  /** RC UnitCategoryIds to keep; empty means every type. */
+  siteCategories?: number[];
+}
+
+export interface NearbyCampground {
+  facilityId: string;
+  facilityName: string;
+  parkId: string;
+  parkName: string;
+  distanceMiles: number;
+  siteTypes: SiteType[];
+  /** Free sites keyed by night, yyyy-MM-dd. Nights with none are absent. */
+  freeByDate: Record<string, number>;
+  /** Nights with at least one free site — what "most availability" sorts on. */
+  openNights: number;
+  lastScannedAt: string | null;
+}
+
+export interface NearbyResults {
+  /** The column axis: every night in the scanned window, in order. */
+  dates: ISODate[];
+  campgrounds: NearbyCampground[];
+  /** Within range and scanned, but nothing free — filtered out of the grid. */
+  fullyBookedCount: number;
+  /** Staleness of the freshest thing we are showing. */
+  oldestScannedAt: string | null;
+}
+
+/** Widest search we will run. Well past useful; exists so a hand-edited URL can't ask for the planet. */
+const MAX_RADIUS_MILES = 500;
+
+async function findNearby(input: NearbyInput): Promise<NearbyResults> {
+  const fields: Record<string, string> = {};
+  if (!Number.isFinite(input.latitude) || Math.abs(input.latitude) > 90) fields.latitude = "Invalid location.";
+  if (!Number.isFinite(input.longitude) || Math.abs(input.longitude) > 180) fields.longitude = "Invalid location.";
+  if (!Number.isFinite(input.radiusMiles) || input.radiusMiles <= 0 || input.radiusMiles > MAX_RADIUS_MILES)
+    fields.radiusMiles = `Pick a distance between 1 and ${MAX_RADIUS_MILES} miles.`;
+  if (Object.keys(fields).length > 0) throw new ValidationError(fields);
+
+  const windowStart = fmt(new Date());
+  const windowEnd = addDays(windowStart, HORIZON_DAYS);
+  const dates = eachDay(windowStart, windowEnd);
+
+  // Distance is computed here rather than in SQL: there are only ~300 parks, so
+  // this is a few hundred haversines against a query we already know how to run.
+  const parks = await parkRepository.listActiveWithFacilities();
+  const wanted = new Set(input.siteCategories ?? []);
+  const inRange = new Map<string, { park: (typeof parks)[number]; distance: number }>();
+
+  for (const park of parks) {
+    // A park RC has no coordinates for cannot be placed, so it cannot be near
+    // anything. Excluding it is honest; guessing a location would not be.
+    if (park.latitude === null || park.longitude === null) continue;
+    const distance = distanceMiles(
+      { latitude: input.latitude, longitude: input.longitude },
+      { latitude: park.latitude, longitude: park.longitude },
+    );
+    if (distance <= input.radiusMiles) inRange.set(park.id, { park, distance });
+  }
+
+  const candidates = [...inRange.values()].flatMap(({ park, distance }) =>
+    park.facilities
+      .filter((f) => wanted.size === 0 || f.siteCategories.some((c) => wanted.has(c)))
+      .map((facility) => ({ facility, park, distance })),
+  );
+  if (candidates.length === 0) {
+    return { dates, campgrounds: [], fullyBookedCount: 0, oldestScannedAt: null };
+  }
+
+  const counts = await availabilityRepository.countFreeByFacilityAndDate(
+    candidates.map((c) => c.facility.id),
+    toDate(windowStart),
+    toDate(windowEnd),
+  );
+
+  const byFacility = new Map<string, Record<string, number>>();
+  for (const row of counts) {
+    const forFacility = byFacility.get(row.facilityId) ?? {};
+    forFacility[fmt(row.date)] = row._count._all;
+    byFacility.set(row.facilityId, forFacility);
+  }
+
+  let fullyBookedCount = 0;
+  let oldestScannedAt: number | null = null;
+  const campgrounds: NearbyCampground[] = [];
+
+  for (const { facility, park, distance } of candidates) {
+    const freeByDate = byFacility.get(facility.id);
+    // Nothing free anywhere in the window. Dropped rather than shown as an
+    // empty row: a screen of grey is noise, not information.
+    if (!freeByDate) {
+      if (facility.lastScannedAt) fullyBookedCount++;
+      continue;
+    }
+    if (facility.lastScannedAt) {
+      const scanned = facility.lastScannedAt.getTime();
+      if (oldestScannedAt === null || scanned < oldestScannedAt) oldestScannedAt = scanned;
+    }
+    campgrounds.push({
+      facilityId: facility.id,
+      facilityName: facility.name,
+      parkId: park.id,
+      parkName: park.name,
+      distanceMiles: Math.round(distance),
+      siteTypes: toSiteTypes(facility.siteCategories),
+      freeByDate,
+      openNights: Object.keys(freeByDate).length,
+      lastScannedAt: facility.lastScannedAt ? facility.lastScannedAt.toISOString() : null,
+    });
+  }
+
+  campgrounds.sort(
+    (a, b) =>
+      a.distanceMiles - b.distanceMiles ||
+      a.parkName.localeCompare(b.parkName) ||
+      a.facilityName.localeCompare(b.facilityName),
+  );
+
+  return {
+    dates,
+    campgrounds,
+    fullyBookedCount,
+    oldestScannedAt: oldestScannedAt ? new Date(oldestScannedAt).toISOString() : null,
+  };
 }

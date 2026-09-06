@@ -252,6 +252,16 @@ export default function Search({ loaderData }: Route.ComponentProps) {
             ))}
           </div>
 
+          {results.totalOpenings === 0 && (
+            <Alert variant="warning" className="mt-4">
+              Nothing open for this pattern.{" "}
+              <Link to="/available-nearby" className="underline underline-offset-2">
+                See what is open near you
+              </Link>
+              , or watch these and we&apos;ll email you when something frees up.
+            </Alert>
+          )}
+
           <Alert className="mt-8 p-4">
             <p className="text-sm">
               Book on{" "}

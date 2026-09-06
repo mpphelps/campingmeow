@@ -101,7 +101,7 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
 
       {watches.length === 0 ? (
         <p className="mt-8 text-sm text-muted-foreground">
-          No watches yet. <Link to="/" className="underline underline-offset-2">Browse parks</Link> and pick a campground to
+          No watches yet. <Link to="/available-nearby" className="underline underline-offset-2">See what&apos;s open near you</Link> or <Link to="/" className="underline underline-offset-2">browse parks</Link>, then pick a campground to
           watch.
         </p>
       ) : (

@@ -88,6 +88,28 @@ export const availabilityRepository = {
   },
 
   /**
+   * How many sites are free per campground per night.
+   *
+   * The nearby grid needs one number per (campground, night) and nothing else,
+   * so the count is done in Postgres. Pulling the raw slots instead would be
+   * ~70,000 rows for a wide radius against ~9,500 here, and the grid would
+   * throw away the per-site detail anyway.
+   *
+   * Rides the [facilityId, date, isFree] index.
+   */
+  async countFreeByFacilityAndDate(facilityIds: string[], windowStart: Date, windowEnd: Date) {
+    return prisma.availabilitySlot.groupBy({
+      by: ["facilityId", "date"],
+      where: {
+        facilityId: { in: facilityIds },
+        isFree: true,
+        date: { gte: windowStart, lte: windowEnd },
+      },
+      _count: { _all: true },
+    });
+  },
+
+  /**
    * The notifier's outbox read: openings nobody has been told about yet,
    * oldest first. Bounded so one pass can't try to email the world.
    */

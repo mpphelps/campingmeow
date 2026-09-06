@@ -18,6 +18,7 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const links = [
+    { to: "/available-nearby", label: "Available nearby" },
     ...(user ? [{ to: "/watches", label: "My watches" }] : []),
     ...(user?.permissions.includes("admin:site") ? [{ to: "/admin", label: "Admin" }] : []),
     ...(user ? [{ to: "/preferences", label: "Settings" }] : []),
@@ -57,12 +58,15 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
             </Button>
           </nav>
 
-          <div className="ml-auto sm:hidden">
-            {links.length === 0 ? (
+          {/* Signed out there is one nav link and one thing we want people to
+              do, so Log in stays outside the drawer rather than a tap deeper. */}
+          <div className="ml-auto flex items-center gap-2 sm:hidden">
+            {!user && (
               <Button variant="outline" size="sm" asChild>
                 <a href="/auth/login">Log in</a>
               </Button>
-            ) : (
+            )}
+            {links.length > 0 && (
               <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
                 <SheetTrigger asChild>
                   <Button variant="outline" size="icon" aria-label="Open menu">
@@ -91,9 +95,11 @@ export default function Layout({ loaderData }: Route.ComponentProps) {
                       </SheetClose>
                     ))}
                   </div>
-                  <Button variant="outline" className="mt-4 w-full" asChild>
-                    <a href="/auth/logout">Log out</a>
-                  </Button>
+                  {user && (
+                    <Button variant="outline" className="mt-4 w-full" asChild>
+                      <a href="/auth/logout">Log out</a>
+                    </Button>
+                  )}
                 </SheetContent>
               </Sheet>
             )}

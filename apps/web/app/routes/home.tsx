@@ -304,6 +304,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             ReserveCalifornia with nobody watching. We watch instead — every bookable state park campground, for the next
             nine weeks — and email you when one matches the dates you want.
           </p>
+          <Button asChild className="mt-4">
+            <Link to="/available-nearby">See what&apos;s open near me</Link>
+          </Button>
         </div>
       </div>
 
