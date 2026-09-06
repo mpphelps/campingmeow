@@ -85,10 +85,11 @@ export const facilityRepository = {
   },
 
   /** The one query the sweep needs: everything worth scanning, in a stable order. */
+  /** The sweep's work list. Park name rides along so admin can show where it is. */
   async listBookable() {
     return prisma.facility.findMany({
       where: { active: true, status: "bookable" },
-      select: { id: true, name: true },
+      select: { id: true, name: true, park: { select: { name: true } } },
       orderBy: { id: "asc" },
     });
   },

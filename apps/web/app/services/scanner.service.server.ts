@@ -43,6 +43,11 @@ export interface ScannerStatus {
   running: boolean;
   /** Campground currently being scanned, if any. */
   current: string | null;
+  /** Which park it belongs to — a campground name alone is often ambiguous. */
+  currentPark: string | null;
+  /** Campgrounds finished so far this pass, and how many there are. */
+  progress: number;
+  progressTotal: number;
   /** Completed passes since start. */
   cycleNumber: number;
   lastCycleStartedAt: string | null;
@@ -56,6 +61,9 @@ export interface ScannerStatus {
 
 let started = false;
 let current: string | null = null;
+let currentPark: string | null = null;
+let progress = 0;
+let progressTotal = 0;
 let cycleNumber = 0;
 let lastCycleStartedAt: number | null = null;
 let lastCycleDurationMs: number | null = null;
@@ -82,6 +90,9 @@ async function getStatus(): Promise<ScannerStatus> {
   return {
     running: started,
     current,
+    currentPark,
+    progress,
+    progressTotal,
     cycleNumber,
     lastCycleStartedAt: lastCycleStartedAt ? new Date(lastCycleStartedAt).toISOString() : null,
     lastCycleDurationMs,
@@ -113,9 +124,12 @@ async function runCycle(): Promise<void> {
   const facilities = await facilityRepository.listBookable();
   let scanned = 0;
   let failed = 0;
+  progress = 0;
+  progressTotal = facilities.length;
 
   for (const facility of facilities) {
     current = facility.name;
+    currentPark = facility.park.name;
     try {
       await availabilityService.scanFacility(facility.id);
       scanned++;
@@ -126,6 +140,8 @@ async function runCycle(): Promise<void> {
       failed++;
     } finally {
       current = null;
+      currentPark = null;
+      progress++;
     }
   }
 

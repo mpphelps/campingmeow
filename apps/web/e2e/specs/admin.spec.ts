@@ -53,6 +53,11 @@ test.describe("admin dashboard", () => {
     // health metric — there is no staleness or backlog to report.
     const lastCycle = page.locator("dt", { hasText: /^Last cycle$/ }).locator("xpath=following-sibling::dd[1]");
     await expect(lastCycle).toHaveText("in progress"); // DISABLE_SCANNER=1, so no cycle has run
+
+    // Progress is what tells a stalled sweep from a slow one, so it is shown
+    // even with nothing running — as "—" rather than a misleading 0%.
+    const thisCycle = page.locator("dt", { hasText: /^This cycle$/ }).locator("xpath=following-sibling::dd[1]");
+    await expect(thisCycle).toHaveText("—");
     await expect(page.getByText("1 bookable · 0 no inventory · 0 first-come")).toBeVisible();
     await expect(page.getByText("Runs after each scan cycle")).toBeVisible();
 

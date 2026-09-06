@@ -118,6 +118,10 @@ model AvailabilitySlot {
 
   @@unique([facilityId, unitId, date])
   @@index([facilityId, date, isFree])
+  // The prune deletes by date alone, and both indexes above lead with
+  // facilityId, so without this it is a full scan of the whole table twice a
+  // cycle — on roughly half a million rows.
+  @@index([date])
 }
 
 // A user's subscription: "tell me when any of these campgrounds has an

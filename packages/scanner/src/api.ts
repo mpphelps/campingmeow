@@ -56,6 +56,7 @@ async function resolveBaseUrl(): Promise<string> {
   try {
     const res = await fetch("https://reservecalifornia.com/config.json", {
       headers: { "User-Agent": UA },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (res.ok) {
       const cfg = (await res.json()) as { rdrApiUrl?: string };
@@ -79,6 +80,16 @@ async function resolveBaseUrl(): Promise<string> {
  * floor, not a guess at the real one.
  */
 const DEFAULT_BLOCK_MS = 15 * 60 * 1000;
+
+/**
+ * Longest we will wait for one ReserveCalifornia response.
+ *
+ * Grid calls normally answer in well under two seconds, so this is not a
+ * performance knob — it is the difference between a slow request and a scanner
+ * that has silently stopped. A timeout surfaces as a connection failure and
+ * takes the existing retry-with-backoff path.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Wall-clock time we're allowed to call again; 0 means we're not blocked. */
 let blockedUntil = 0;
@@ -146,6 +157,10 @@ async function rdr<T>(
           ...(init?.body ? { "Content-Type": "application/json" } : {}),
         },
         body: init?.body ? JSON.stringify(init.body) : undefined,
+        // Without this a hung connection waits forever, and because the scanner
+        // is one sequential loop, forever means the whole sweep stops — no
+        // error, no cycle, nothing to see but a status that never changes.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       // Connection-level failure (DNS, reset, timeout) — worth another go.
