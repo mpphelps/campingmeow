@@ -13,11 +13,6 @@ export const userRepository = {
     return prisma.user.create({ data });
   },
 
-  async listAll() {
-    return prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-    });
-  },
 
   async listAllWithWatchCounts() {
     return prisma.user.findMany({

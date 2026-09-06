@@ -37,11 +37,4 @@ export const userPreferenceRepository = {
     });
   },
 
-  /** Invalidates every unsubscribe link previously sent to this user. */
-  async rotateToken(userId: string) {
-    return prisma.userPreference.update({
-      where: { userId },
-      data: { unsubscribeToken: newToken() },
-    });
-  },
 };

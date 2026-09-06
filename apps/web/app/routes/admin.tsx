@@ -30,6 +30,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const sync = useFetcher<CatalogSyncResult>();
   const syncing = sync.state !== "idle";
   const scanner = dashboard.scanner;
+  const recheck = useFetcher<{ checked: number; nowBookable: string[] }>();
   const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
@@ -92,8 +93,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-sm text-muted-foreground">
-              Runs continuously, always scanning whichever campground is most overdue — watched ones first (target: under an hour
-              old), then the rest of the catalog (under a day). Every request queues at a global one-per-second gate.
+              Runs continuously over every bookable campground across a 63-day window, always taking the most overdue. A full
+              cycle is ~17 minutes. Campgrounds with no inventory or first-come-first-served sites are never scanned — nothing
+              there can open up. Every request queues at a global one-per-second gate.
             </p>
 
             {dashboard.rateLimit.blocked && (
@@ -112,23 +114,38 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               </div>
               <div>
                 <dt className="text-muted-foreground">Overdue</dt>
+                <dd className="font-medium tabular-nums">{scanner.overdue}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Oldest scan</dt>
+                <dd className="font-medium">{scanner.oldestScan ? timeAgo(scanner.oldestScan) : "never"}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-muted-foreground">Catalog</dt>
                 <dd className="font-medium tabular-nums">
-                  {scanner.watchedOverdue} watched · {scanner.catalogOverdue} catalog
+                  {scanner.byStatus.bookable ?? 0} bookable · {scanner.byStatus.no_inventory ?? 0} no inventory ·{" "}
+                  {scanner.byStatus.first_come_first_served ?? 0} first-come
                 </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Oldest watched scan</dt>
-                <dd className="font-medium">{scanner.oldestWatchedScan ? timeAgo(scanner.oldestWatchedScan) : "never"}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Oldest catalog scan</dt>
-                <dd className="font-medium">{scanner.oldestCatalogScan ? timeAgo(scanner.oldestCatalogScan) : "never"}</dd>
               </div>
             </dl>
 
             <p className="mt-3 text-xs text-muted-foreground">
               A rising overdue count or an oldest scan past its target means we are not keeping up.
             </p>
+
+            <recheck.Form method="post" action="/api/recheck-facilities" className="mt-3">
+              <Button type="submit" variant="outline" size="sm" disabled={recheck.state !== "idle"}>
+                {recheck.state !== "idle" ? "Re-checking…" : "Re-check non-bookable campgrounds"}
+              </Button>
+            </recheck.Form>
+            {recheck.data && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Checked {recheck.data.checked}.{" "}
+                {recheck.data.nowBookable.length === 0
+                  ? "None have inventory yet."
+                  : `Now bookable: ${recheck.data.nowBookable.join(", ")}.`}
+              </p>
+            )}
 
             <Separator className="mt-4" />
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">

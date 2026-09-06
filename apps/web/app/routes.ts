@@ -21,4 +21,5 @@ export default [
   route("auth/test-login", "routes/auth.test-login.ts"),
   route("api/catalog-sync", "routes/api.catalog-sync.ts"),
   route("api/geocode", "routes/api.geocode.ts"),
+  route("api/recheck-facilities", "routes/api.recheck-facilities.ts"),
 ] satisfies RouteConfig;

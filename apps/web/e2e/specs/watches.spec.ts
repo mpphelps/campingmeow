@@ -1,6 +1,7 @@
 import { prisma } from "@campingmeow/database";
 import { test, expect } from "../test-fixtures";
 import { createOwnerUser, createPark, createFacility, createWatch } from "../utilities/utilities";
+import { MAX_WATCHES_PER_USER } from "../../app/lib/limits";
 
 test.describe("watches", () => {
   test.use({ user: { email: "watcher@example.com", firstName: "Watcher", lastName: "User" } });
@@ -26,7 +27,7 @@ test.describe("watches", () => {
     await expect(page).toHaveURL(/\/watches$/);
     await expect(page.getByText("Yosemite", { exact: true })).toBeVisible();
     await expect(page.getByText("Upper Pines")).toBeVisible();
-    await expect(page.getByText("Check-in Fri, Sat · 2 nights · anytime in the booking window")).toBeVisible();
+    await expect(page.getByText("Check-in Fri, Sat · 2 nights · next nine weeks")).toBeVisible();
   });
 
   test("creates a watch covering multiple campgrounds across parks", async ({ page }) => {
@@ -61,7 +62,7 @@ test.describe("watches", () => {
     await expect(page.locator("#startDate")).toHaveCount(0);
     await expect(page.locator("#endDate")).toHaveCount(0);
     await expect(page.getByText("Only between specific dates")).toHaveCount(0);
-    await expect(page.getByText("rolls forward as ReserveCalifornia opens new dates", { exact: false })).toBeVisible();
+    await expect(page.getByText("covers the next nine weeks and rolls forward", { exact: false })).toBeVisible();
   });
 
   test("shows a validation error when no check-in days are selected", async ({ page }) => {
@@ -176,33 +177,84 @@ test.describe("watch limits", () => {
   });
 });
 
-// One active watch per user while scanning is a single in-process loop.
-test.describe("one watch per user", () => {
+/**
+ * The per-user cap is no longer about scan cost — the scanner sweeps every
+ * bookable campground regardless of who watches what. It stops one account
+ * turning itself into an email firehose.
+ */
+test.describe("watches per user", () => {
   test.use({ user: { email: "onewatch@example.com", firstName: "One", lastName: "Watch" } });
 
-  test("refuses a second watch and allows one again after deleting", async ({ page }) => {
+  test("refuses the watch past the limit, and allows one again after deleting", async ({ page }) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { email: "onewatch@example.com" } });
     const park = await createPark({ name: "Mount Diablo" });
     const facility = await createFacility({ name: "Live Oak", parkId: park.id });
-    const watch = await createWatch({ userId: user.id, facilityIds: facility.id, active: true });
+
+    const watches = [];
+    for (let i = 0; i < MAX_WATCHES_PER_USER; i++) {
+      watches.push(await createWatch({ userId: user.id, facilityIds: facility.id, active: true }));
+    }
 
     const submit = () => {
       const body = new URLSearchParams();
       body.append("facilityIds", facility.id);
       body.append("checkinDays", "5");
       body.append("nights", "1");
-      body.append("bounds", "anytime");
       return page.request.post("/watches/new", {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         data: body.toString(),
       });
     };
 
-    expect(await (await submit()).text()).toContain("You already have a watch");
-    expect(await prisma.watch.count()).toBe(1);
+    expect(await (await submit()).text()).toContain("which is the limit");
+    expect(await prisma.watch.count()).toBe(MAX_WATCHES_PER_USER);
 
-    await prisma.watch.delete({ where: { id: watch.id } });
+    await prisma.watch.delete({ where: { id: watches[0]!.id } });
     await submit();
-    expect(await prisma.watch.count()).toBe(1);
+    expect(await prisma.watch.count()).toBe(MAX_WATCHES_PER_USER);
+  });
+});
+
+/**
+ * A watch on a campground with nothing reservable could never fire — no
+ * cancellation can happen where no booking can. The picker disables them and
+ * the service refuses them, because the form posts ids and the UI can be
+ * bypassed.
+ */
+test.describe("unwatchable campgrounds", () => {
+  test.use({ user: { email: "unwatchable@example.com", firstName: "Un", lastName: "Watch" } });
+
+  test("shows them disabled, with the reason", async ({ page }) => {
+    const park = await createPark({ name: "Red Rock Canyon" });
+    await createFacility({ name: "Ricardo Campground", parkId: park.id, status: "first_come_first_served" });
+    await createFacility({ name: "Junction Campground", parkId: park.id, status: "no_inventory" });
+    await createFacility({ name: "Normal Campground", parkId: park.id, status: "bookable" });
+
+    await page.goto("/watches/new");
+
+    await expect(page.getByLabel("Red Rock Canyon · Normal Campground")).toBeEnabled();
+    await expect(page.getByLabel("Red Rock Canyon · Ricardo Campground")).toBeDisabled();
+    await expect(page.getByLabel("Red Rock Canyon · Junction Campground")).toBeDisabled();
+
+    await expect(page.getByText("First-come, first-served — not reservable online")).toBeVisible();
+    await expect(page.getByText("No reservable sites right now")).toBeVisible();
+  });
+
+  test("the service refuses one even if the form is bypassed", async ({ page }) => {
+    const park = await createPark({ name: "Red Rock Canyon" });
+    const fcfs = await createFacility({ name: "Ricardo Campground", parkId: park.id, status: "first_come_first_served" });
+
+    const body = new URLSearchParams();
+    body.append("facilityIds", fcfs.id);
+    body.append("checkinDays", "5");
+    body.append("nights", "1");
+
+    const response = await page.request.post("/watches/new", {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: body.toString(),
+    });
+
+    expect(await response.text()).toContain("aren't reservable online");
+    expect(await prisma.watch.count()).toBe(0);
   });
 });

@@ -1,6 +1,7 @@
 import { logger } from "~/lib/logger.server";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
+import { HORIZON_DAYS } from "~/lib/limits";
 import { availabilityService } from "./availability.service.server";
 
 /**
@@ -19,15 +20,24 @@ import { availabilityService } from "./availability.service.server";
  *  - **No collisions.** There are no discrete sweeps to overlap, so nothing has
  *    to be skipped or queued behind anything else.
  *
+ * It scans **every bookable campground**, not just watched ones. That makes scan
+ * cost a function of the catalog (fixed, ~335) rather than of user count, which
+ * only grows. Watched-only scanning costs more than this past ~170 watched
+ * campgrounds, which is 10-20 users.
+ *
  * It runs in the web app's process on purpose: the rate gate that keeps us
  * under ReserveCalifornia's limit is per-process state, so a second container
  * would get its own gate and silently double our request rate.
  */
 
-/** Watched campgrounds are the product — keep them fresh to the hour. */
-const WATCHED_MAX_AGE_MS = 60 * 60 * 1000;
-/** Everything else backs browse/search, where day-old data is honest and fine. */
-const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * Freshness target for every bookable campground.
+ *
+ * Measured at 4.07s per campground — three gated calls plus network and the
+ * slot write — so ~335 bookable campgrounds is a ~23 minute cycle. 25 leaves
+ * room for a newly created watch without pushing the cycle over.
+ */
+const MAX_AGE_MS = 25 * 60 * 1000;
 /** Nothing overdue: wait before asking again. */
 const IDLE_SLEEP_MS = 30_000;
 /** After a failure, pause before the next pick so we don't spin on a bad row. */
@@ -39,12 +49,12 @@ export interface ScannerStatus {
   running: boolean;
   /** Campground currently being scanned, if any. */
   current: string | null;
-  /** Campgrounds past their freshness target right now. */
-  watchedOverdue: number;
-  catalogOverdue: number;
+  /** Bookable campgrounds past their freshness target right now. */
+  overdue: number;
   /** Worst staleness — the number that says whether we are keeping up. */
-  oldestWatchedScan: string | null;
-  oldestCatalogScan: string | null;
+  oldestScan: string | null;
+  /** How the catalog breaks down; only `bookable` is ever scanned. */
+  byStatus: Record<string, number>;
   /** Throughput over the last hour, derived from lastScannedAt. */
   scannedLastHour: number;
 }
@@ -69,7 +79,7 @@ function start(): void {
   }
   started = true;
   logger.info(
-    { action: "scanner.start", watchedMaxAgeMinutes: WATCHED_MAX_AGE_MS / 60000, catalogMaxAgeHours: CATALOG_MAX_AGE_MS / 3600000 },
+    { action: "scanner.start", maxAgeMinutes: MAX_AGE_MS / 60000 },
     "scanner started",
   );
   void loop();
@@ -85,42 +95,26 @@ function nudge(): void {
 
 async function getStatus(): Promise<ScannerStatus> {
   const now = Date.now();
-  const [watchedOverdue, catalogOverdue, oldestWatched, oldestCatalog, scannedLastHour] = await Promise.all([
-    facilityRepository.countOverdue({ watchedOnly: true, scannedBefore: new Date(now - WATCHED_MAX_AGE_MS) }),
-    facilityRepository.countOverdue({ watchedOnly: false, scannedBefore: new Date(now - CATALOG_MAX_AGE_MS) }),
-    facilityRepository.findOldestScan({ watchedOnly: true }),
-    facilityRepository.findOldestScan({ watchedOnly: false }),
+  const [overdue, oldest, scannedLastHour, byStatus] = await Promise.all([
+    facilityRepository.countOverdue({ scannedBefore: new Date(now - MAX_AGE_MS) }),
+    facilityRepository.findOldestScan(),
     facilityRepository.countScannedSince(new Date(now - 60 * 60 * 1000)),
+    facilityRepository.countByStatus(),
   ]);
 
   return {
     running: started,
     current,
-    watchedOverdue,
-    catalogOverdue,
-    oldestWatchedScan: oldestWatched?.lastScannedAt?.toISOString() ?? null,
-    oldestCatalogScan: oldestCatalog?.lastScannedAt?.toISOString() ?? null,
+    overdue,
+    oldestScan: oldest?.lastScannedAt?.toISOString() ?? null,
     scannedLastHour,
+    byStatus,
   };
 }
 
-/**
- * Watched campgrounds first, then the rest of the catalog. Checking watched
- * work on every iteration is what removes the need for priorities: a watch
- * created during a catalog pass is picked up on the very next turn.
- */
+/** The most overdue bookable campground, nulls (never scanned) first. */
 async function pickNext() {
-  const now = Date.now();
-  const watched = await facilityRepository.findMostOverdue({
-    watchedOnly: true,
-    scannedBefore: new Date(now - WATCHED_MAX_AGE_MS),
-  });
-  if (watched) return watched;
-
-  return facilityRepository.findMostOverdue({
-    watchedOnly: false,
-    scannedBefore: new Date(now - CATALOG_MAX_AGE_MS),
-  });
+  return facilityRepository.findMostOverdue({ scannedBefore: new Date(Date.now() - MAX_AGE_MS) });
 }
 
 async function loop(): Promise<void> {
@@ -151,10 +145,15 @@ async function loop(): Promise<void> {
 }
 
 /**
- * Drop slots for nights that have already passed. `replaceWindow` only rewrites
- * today onward, so past dates orphan at roughly 25k rows/day across the
- * catalog. Done here rather than per scan because 500 no-op DELETEs a day is
- * waste; trend data lives in AvailabilityEvent, so this is not a loss.
+ * Drop slots outside the scanned window, on **both** sides.
+ *
+ * `replaceWindow` only rewrites the range it replaces, so anything outside it
+ * is never updated and never removed. Past nights orphan at the near edge, and
+ * shrinking the window to 63 days stranded ~985k rows at the far edge — a third
+ * of them marked free, which search and the calendar would have shown as
+ * current. The far-edge prune is not a one-off: every scan strands another day.
+ *
+ * Trend data lives in AvailabilityEvent, so dropping slots is not a loss.
  */
 async function pruneIfDue(): Promise<void> {
   if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
@@ -162,8 +161,16 @@ async function pruneIfDue(): Promise<void> {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const deleted = await availabilityRepository.deleteSlotsBefore(today);
-  if (deleted > 0) logger.info({ action: "scanner.pruned", deleted }, "pruned past availability slots");
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + HORIZON_DAYS);
+
+  const [past, future] = await Promise.all([
+    availabilityRepository.deleteSlotsBefore(today),
+    availabilityRepository.deleteSlotsAfter(horizon),
+  ]);
+  if (past + future > 0) {
+    logger.info({ action: "scanner.pruned", past, future }, "pruned slots outside the scanned window");
+  }
 }
 
 function sleep(ms: number): Promise<void> {

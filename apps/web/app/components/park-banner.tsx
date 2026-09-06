@@ -13,8 +13,7 @@ const SUN = "#E2703A";
 const RIDGE_FAR = "#8FA9A0";
 const RIDGE_MID = "#5B8266";
 const RIDGE_NEAR = "#31543F";
-export const FOREST = "#1E3A2B";
-export const CREAM = "#F2E4CC";
+const FOREST = "#1E3A2B";
 
 /** Conifers along the foreground band — varied so it doesn't read as a pattern. */
 const TREES = [

@@ -70,9 +70,9 @@ export default function Search({ loaderData }: Route.ComponentProps) {
       </Link>
       <h1 className="mt-2 text-4xl font-semibold">Check availability</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-        Searching {facilities.length} campground{facilities.length === 1 ? "" : "s"} from our own records, refreshed by a nightly
-        sweep of every park. Openings move fast and this is a snapshot, not live — set a watch and we&apos;ll email you the moment
-        one appears.
+        Searching {facilities.length} campground{facilities.length === 1 ? "" : "s"} from our own records, refreshed every ~25
+        minutes across the next nine weeks. Openings move fast and this is a snapshot, not live — set a watch and we&apos;ll email
+        you the moment one appears.
       </p>
 
       {fields?.facilityIds && (
@@ -126,7 +126,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
               <RadioGroupItem value="anytime" id="bounds-anytime" />
               <Label htmlFor="bounds-anytime">
                 Anytime in the booking window{" "}
-                <span className="text-xs text-muted-foreground">(the full ~6 months ReserveCalifornia has open)</span>
+                <span className="text-xs text-muted-foreground">(the next nine weeks — all we track)</span>
               </Label>
             </div>
             <div className="flex items-center gap-2">

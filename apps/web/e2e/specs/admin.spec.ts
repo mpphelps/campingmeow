@@ -48,9 +48,12 @@ test.describe("admin dashboard", () => {
     // assertion to the Status field rather than matching bare text twice.
     const statusValue = page.locator("dt", { hasText: /^Status$/ }).locator("xpath=following-sibling::dd[1]");
     await expect(statusValue).toHaveText("Stopped"); // DISABLE_SCANNER=1 in tests
-    // One active campground, never scanned, so it is overdue on both counts.
-    await expect(page.getByText("1 watched · 1 catalog")).toBeVisible();
-    await expect(page.getByText("never")).toHaveCount(2);
+
+    // The scanner no longer distinguishes watched from unwatched — it sweeps
+    // every bookable campground, so there is one overdue count, not two.
+    const overdue = page.locator("dt", { hasText: /^Overdue$/ }).locator("xpath=following-sibling::dd[1]");
+    await expect(overdue).toHaveText("1");
+    await expect(page.getByText("1 bookable · 0 no inventory · 0 first-come")).toBeVisible();
 
     const table = page.locator("table");
     const adminRow = table.locator("tr", { hasText: "admin@example.com" });

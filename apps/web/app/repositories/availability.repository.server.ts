@@ -64,6 +64,12 @@ export const availabilityRepository = {
    * orphan at roughly 25k rows/day across the catalog. Trend data lives in
    * AvailabilityEvent, which is why dropping these is not a loss.
    */
+  /** The far edge of the window: rows the scanner will never rewrite again. */
+  async deleteSlotsAfter(date: Date) {
+    const { count } = await prisma.availabilitySlot.deleteMany({ where: { date: { gt: date } } });
+    return count;
+  },
+
   async deleteSlotsBefore(date: Date) {
     const { count } = await prisma.availabilitySlot.deleteMany({ where: { date: { lt: date } } });
     return count;
@@ -108,11 +114,4 @@ export const availabilityRepository = {
     return count;
   },
 
-  async countByFacility(facilityIds: string[]) {
-    return prisma.availabilitySlot.groupBy({
-      by: ["facilityId"],
-      where: { facilityId: { in: facilityIds } },
-      _count: { _all: true },
-    });
-  },
 };

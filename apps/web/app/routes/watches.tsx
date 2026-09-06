@@ -72,8 +72,7 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
           ))}
         </div>
         <div className="mt-1 text-muted-foreground">
-          Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · anytime in the booking
-          window
+          Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · next nine weeks
         </div>
       </div>
       <fetcher.Form method="post">

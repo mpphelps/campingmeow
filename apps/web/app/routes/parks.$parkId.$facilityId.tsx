@@ -43,6 +43,21 @@ export default function CampgroundDetail({ loaderData }: Route.ComponentProps) {
           windowEnd={calendar.windowEnd}
           legend="At least one site free that night"
         />
+
+        {/* We only hold 63 days. ReserveCalifornia browses the full six months
+            better than we would, so we point at it rather than half-build it. */}
+        <p className="mt-6 text-sm text-muted-foreground">
+          Looking further ahead than nine weeks?{" "}
+          <a
+            href={`https://www.reservecalifornia.com/park/${calendar.rcPlaceId}/${calendar.rcFacilityId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            See the full calendar on ReserveCalifornia
+          </a>
+          .
+        </p>
       </div>
     </div>
   );
