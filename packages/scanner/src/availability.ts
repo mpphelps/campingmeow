@@ -19,6 +19,10 @@ export interface FacilityAvailability {
   maxDate: ISODate | null;
   /** Sites a normal person can book online. */
   sites: SiteAvailability[];
+  /** Distinct RC UnitCategoryIds across the bookable sites, ascending. */
+  categories: number[];
+  /** Longest vehicle any bookable site here takes; 0 when none do. */
+  maxVehicleLength: number;
   /**
    * Every unit the grid returned, bookable or not. The difference between this
    * and `sites.length` is what distinguishes a first-come, first-served
@@ -36,14 +40,20 @@ export interface FacilityAvailability {
  */
 export function mergeGrid(
   grid: GridResponse,
-  into: Map<number, SiteAvailability>
-): { totalUnits: number } {
+  into: Map<number, SiteAvailability>,
+  categories?: Set<number>
+): { totalUnits: number; maxVehicleLength: number } {
   const units = grid.Facility?.Units;
-  if (!units) return { totalUnits: 0 };
+  if (!units) return { totalUnits: 0, maxVehicleLength: 0 };
   const all = Object.values(units);
+  let maxVehicleLength = 0;
   for (const unit of all) {
     // Only sites a normal person can actually book online.
     if (!unit.AllowWebBooking || !unit.IsWebViewable) continue;
+    // Collected in the loop we already run: the category and vehicle length
+    // ride along on units we are parsing anyway, so this costs nothing.
+    categories?.add(unit.UnitCategoryId);
+    if (unit.VehicleLength > maxVehicleLength) maxVehicleLength = unit.VehicleLength;
     let site = into.get(unit.UnitId);
     if (!site) {
       site = { unitId: unit.UnitId, name: unit.Name, freeNights: new Set() };
@@ -53,7 +63,7 @@ export function mergeGrid(
       if (slice.IsFree) site.freeNights.add(slice.Date);
     }
   }
-  return { totalUnits: all.length };
+  return { totalUnits: all.length, maxVehicleLength };
 }
 
 /** Latest date any slice in this response covers, so we can page past it. */
@@ -95,6 +105,8 @@ export async function fetchFacilityAvailability(
   let maxDate: ISODate | null = null;
 
   let totalUnits = 0;
+  let maxVehicleLength = 0;
+  const categories = new Set<number>();
   let cursor = startDate;
   while (cursor <= endDate) {
     const grid = await getGrid(facilityId, cursor, 1);
@@ -102,7 +114,9 @@ export async function fetchFacilityAvailability(
     if (grid.MinDate) minDate = grid.MinDate;
     if (grid.MaxDate) maxDate = grid.MaxDate;
     // Highest across the window: a unit missing from one page is still real.
-    totalUnits = Math.max(totalUnits, mergeGrid(grid, sites).totalUnits);
+    const merged = mergeGrid(grid, sites, categories);
+    totalUnits = Math.max(totalUnits, merged.totalUnits);
+    maxVehicleLength = Math.max(maxVehicleLength, merged.maxVehicleLength);
 
     const covered = lastCoveredDate(grid);
     let next = covered ? addDays(covered, 1) : addDays(cursor, FALLBACK_STEP_DAYS);
@@ -120,6 +134,8 @@ export async function fetchFacilityAvailability(
     minDate,
     maxDate,
     sites: [...sites.values()],
+    categories: [...categories].sort((a, b) => a - b),
+    maxVehicleLength,
     totalUnits,
   };
 }

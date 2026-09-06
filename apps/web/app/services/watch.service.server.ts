@@ -2,6 +2,7 @@ import { ForbiddenError, ValidationError } from "~/lib/errors";
 import { MAX_WATCHES_PER_USER, MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
+import { toSiteTypes, type SiteType } from "~/lib/site-types";
 import { watchRepository } from "../repositories/watch.repository.server";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -11,6 +12,7 @@ export interface WatchFacilityItem {
   facilityName: string;
   parkId: string;
   parkName: string;
+  siteTypes: SiteType[];
 }
 
 export interface WatchListItem {
@@ -124,7 +126,7 @@ function toListItem(watch: {
   nights: number;
   active: boolean;
   facilities: {
-    facility: { id: string; name: string; park: { id: string; name: string } };
+    facility: { id: string; name: string; siteCategories: number[]; park: { id: string; name: string } };
   }[];
 }): WatchListItem {
   return {
@@ -133,6 +135,7 @@ function toListItem(watch: {
       .map((wf) => ({
         facilityId: wf.facility.id,
         facilityName: wf.facility.name,
+        siteTypes: toSiteTypes(wf.facility.siteCategories),
         parkId: wf.facility.park.id,
         parkName: wf.facility.park.name,
       }))

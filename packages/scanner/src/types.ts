@@ -57,6 +57,20 @@ export interface Unit {
   IsAda: boolean;
   AllowWebBooking: boolean;
   IsWebViewable: boolean;
+  /**
+   * What sort of site this is — campsite, RV hookup, cabin, group, and so on.
+   * Measured across 60 campgrounds: seven distinct values, and 83% of
+   * campgrounds use exactly one. See app/lib/site-types.ts for the mapping.
+   */
+  UnitCategoryId: number;
+  /**
+   * Longest vehicle this site takes; 0 when it takes none.
+   *
+   * Deliberately *not* a site type. A plain tent-image campsite routinely
+   * reports 35 — most drive-in sites fit an RV — so reading this as
+   * "RV vs tent" is wrong. It answers "will my trailer fit", nothing else.
+   */
+  VehicleLength: number;
   Slices: Record<string, Slice>; // key = "yyyy-MM-ddT00:00:00"
 }
 

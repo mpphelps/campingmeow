@@ -13,6 +13,7 @@ import { Select } from "@campingmeow/ui/components/select";
 import { toast } from "@campingmeow/ui/components/toast";
 import type { Route } from "./+types/home";
 import { ParkBanner } from "~/components/park-banner";
+import { SiteTypeIcons } from "~/components/site-type-icons";
 import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
@@ -137,7 +138,10 @@ function ParkRow({
               onCheckedChange={(checked) => onToggleFacility(facility.id, checked === true)}
               aria-label={`Select ${facility.name}`}
             />
-            <Label htmlFor={`facility-${facility.id}`}>{facility.name}</Label>
+            <Label htmlFor={`facility-${facility.id}`} className="flex items-center gap-1.5">
+              {facility.name}
+              <SiteTypeIcons types={facility.siteTypes} />
+            </Label>
           </div>
         ))}
         <Link to={`/parks/${park.id}`} className="mt-2 inline-block text-xs text-muted-foreground hover:text-foreground">
@@ -300,6 +304,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             ReserveCalifornia with nobody watching. We watch instead — every bookable state park campground, for the next
             nine weeks — and email you when one matches the dates you want.
           </p>
+          <Button asChild className="mt-4">
+            <Link to="/available-nearby">See what&apos;s open near me</Link>
+          </Button>
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import { List, ListItem } from "@campingmeow/ui/components/list";
 import { Select } from "@campingmeow/ui/components/select";
 import type { Route } from "./+types/watches";
 import { AvailabilityCalendar } from "~/components/availability-calendar";
+import { SiteTypeIcons } from "~/components/site-type-icons";
 import { ForbiddenError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
 import { availabilityService } from "~/services/availability.service.server";
@@ -68,6 +69,7 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
                 {f.parkName}
               </Link>
               <span className="text-muted-foreground"> · {f.facilityName}</span>
+              <SiteTypeIcons types={f.siteTypes} className="ml-1.5 align-text-bottom" />
             </span>
           ))}
         </div>
@@ -99,7 +101,7 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
 
       {watches.length === 0 ? (
         <p className="mt-8 text-sm text-muted-foreground">
-          No watches yet. <Link to="/" className="underline underline-offset-2">Browse parks</Link> and pick a campground to
+          No watches yet. <Link to="/available-nearby" className="underline underline-offset-2">See what&apos;s open near you</Link> or <Link to="/" className="underline underline-offset-2">browse parks</Link>, then pick a campground to
           watch.
         </p>
       ) : (

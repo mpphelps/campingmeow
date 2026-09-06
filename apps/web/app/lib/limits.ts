@@ -8,13 +8,6 @@
  */
 
 /**
- * Campgrounds one availability search may cover. Search reads our database and
- * never calls ReserveCalifornia, so this no longer rations API budget — it just
- * bounds one query and one page of results. Kept generous.
- */
-export const MAX_SEARCH_FACILITIES = 50;
-
-/**
  * Campgrounds one watch may cover. Also no longer a scan-cost limit — it keeps a
  * single watch comprehensible, and bounds how much one email can be about.
  */

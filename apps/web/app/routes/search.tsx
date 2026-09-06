@@ -10,6 +10,7 @@ import { List, ListItem } from "@campingmeow/ui/components/list";
 import { RadioGroup, RadioGroupItem } from "@campingmeow/ui/components/radio-group";
 import type { Route } from "./+types/search";
 import { addDays, fmt } from "@campingmeow/scanner";
+import { SiteTypeIcons } from "~/components/site-type-icons";
 import { ValidationError } from "~/lib/errors";
 import { HORIZON_DAYS } from "~/lib/limits";
 import { timeAgo } from "~/lib/time";
@@ -220,6 +221,7 @@ export default function Search({ loaderData }: Route.ComponentProps) {
               <div key={facility.facilityId}>
                 <h2 className="text-base font-medium">
                   {facility.parkName} · {facility.facilityName}
+                  <SiteTypeIcons types={facility.siteTypes} className="ml-1.5 align-text-bottom" />
                   <span className="ml-2 font-normal text-muted-foreground">
                     {facility.lastScannedAt ? `updated ${timeAgo(facility.lastScannedAt)}` : "not scanned yet"}
                   </span>
@@ -249,6 +251,16 @@ export default function Search({ loaderData }: Route.ComponentProps) {
               </div>
             ))}
           </div>
+
+          {results.totalOpenings === 0 && (
+            <Alert variant="warning" className="mt-4">
+              Nothing open for this pattern.{" "}
+              <Link to="/available-nearby" className="underline underline-offset-2">
+                See what is open near you
+              </Link>
+              , or watch these and we&apos;ll email you when something frees up.
+            </Alert>
+          )}
 
           <Alert className="mt-8 p-4">
             <p className="text-sm">

@@ -111,8 +111,31 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               <div>
                 <dt className="text-muted-foreground">Status</dt>
                 <dd className="font-medium">
-                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Between cycles"}
+                  {!scanner.running ? "Stopped" : scanner.current ? "Scanning" : "Between cycles"}
                 </dd>
+                {scanner.current && (
+                  // Campground names repeat across the state ("Group Camp",
+                  // "Upper Loop"), so the park is what makes this locatable.
+                  <dd className="text-xs text-muted-foreground">
+                    {scanner.currentPark} — {scanner.current}
+                  </dd>
+                )}
+              </div>
+              <div>
+                <dt className="text-muted-foreground">This cycle</dt>
+                <dd className="font-medium tabular-nums">
+                  {scanner.progressTotal === 0
+                    ? "—"
+                    : `${Math.round((scanner.progress / scanner.progressTotal) * 100)}% · ${scanner.progress}/${scanner.progressTotal}`}
+                </dd>
+                {scanner.progressTotal > 0 && (
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-poppy transition-[width] duration-500"
+                      style={{ width: `${(scanner.progress / scanner.progressTotal) * 100}%` }}
+                    />
+                  </div>
+                )}
               </div>
               <div>
                 <dt className="text-muted-foreground">Last cycle</dt>

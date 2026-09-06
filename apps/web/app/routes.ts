@@ -7,6 +7,7 @@ export default [
     route("parks/:parkId", "routes/parks.$parkId.tsx"),
     route("parks/:parkId/:facilityId", "routes/parks.$parkId.$facilityId.tsx"),
     route("search", "routes/search.tsx"),
+    route("available-nearby", "routes/available-nearby.tsx"),
     route("preferences", "routes/preferences.tsx"),
     route("watches", "routes/watches.tsx"),
     route("watches/new", "routes/watches.new.tsx"),

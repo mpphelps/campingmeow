@@ -3,6 +3,7 @@ import { logger } from "~/lib/logger.server";
 import { parkRepository } from "../repositories/park.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { authService, type AuthUser } from "./auth.service.server";
+import { toSiteTypes, type SiteType } from "~/lib/site-types";
 import { ADMIN_PERMISSION } from "./admin.service.server";
 
 export interface CatalogSyncResult {
@@ -17,7 +18,7 @@ export interface ParkDetail {
   id: string;
   name: string;
   city: string | null;
-  facilities: { id: string; name: string }[];
+  facilities: { id: string; name: string; siteTypes: SiteType[] }[];
 }
 
 export interface FacilityDetail {
@@ -37,6 +38,7 @@ export interface FacilityPickerItem {
   id: string;
   name: string;
   parkName: string;
+  siteTypes: SiteType[];
   /** False when a watch on this could never fire — nothing is reservable. */
   watchable: boolean;
   unwatchableReason: string | null;
@@ -49,7 +51,7 @@ export interface ParkBrowseItem {
   /** Null when ReserveCalifornia has no coordinates; excluded from distance filtering. */
   latitude: number | null;
   longitude: number | null;
-  facilities: { id: string; name: string }[];
+  facilities: { id: string; name: string; siteTypes: SiteType[] }[];
 }
 
 // Domain service for the park/facility catalog.
@@ -87,7 +89,11 @@ async function listParksWithFacilities(): Promise<ParkBrowseItem[]> {
     city: titleCaseCity(park.city),
     latitude: park.latitude,
     longitude: park.longitude,
-    facilities: park.facilities.map((f) => ({ id: f.id, name: f.name })),
+    facilities: park.facilities.map((f) => ({
+      id: f.id,
+      name: f.name,
+      siteTypes: toSiteTypes(f.siteCategories),
+    })),
   }));
 }
 
@@ -110,6 +116,7 @@ async function listFacilityPicker(filter?: { parkIds?: string[]; facilityIds?: s
       id: f.id,
       name: f.name,
       parkName: f.park.name,
+      siteTypes: toSiteTypes(f.siteCategories),
       watchable: f.status === "bookable",
       unwatchableReason: f.status === "bookable" ? null : (UNWATCHABLE_REASON[f.status] ?? null),
     }))
@@ -137,7 +144,11 @@ async function getParkDetail(parkId: string): Promise<ParkDetail | null> {
     id: park.id,
     name: park.name,
     city: titleCaseCity(park.city),
-    facilities: facilities.map((f) => ({ id: f.id, name: f.name })),
+    facilities: facilities.map((f) => ({
+      id: f.id,
+      name: f.name,
+      siteTypes: toSiteTypes(f.siteCategories),
+    })),
   };
 }
 

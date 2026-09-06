@@ -48,10 +48,17 @@ test.describe("mobile header", () => {
 test.describe("mobile header — logged out", () => {
   test.use({ viewport: PHONE, user: null });
 
-  test("shows Log in directly rather than an empty drawer", async ({ page }) => {
+  test("keeps Log in outside the drawer, and never offers Log out", async ({ page }) => {
     await page.goto("/");
+
+    // One tap, not two: signing in is the thing we want a visitor to do.
     await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open menu" })).toHaveCount(0);
+
+    // The drawer exists now that there is a link worth putting in it, but it
+    // must not offer to log out someone who was never logged in.
+    await page.getByRole("button", { name: "Open menu" }).click();
+    await expect(page.getByRole("link", { name: "Available nearby" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Log out" })).toHaveCount(0);
   });
 });
 
