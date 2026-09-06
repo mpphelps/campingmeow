@@ -63,6 +63,8 @@ export interface ScannerStatus {
 
 let started = false;
 let paused = false;
+/** Set while a cycle is in flight, cleared when one completes. Survives a pause. */
+let cycleStartedAt: number | null = null;
 let current: string | null = null;
 let currentPark: string | null = null;
 let progress = 0;
@@ -147,6 +149,8 @@ function setPaused(next: boolean): void {
   if (paused === next) return;
   paused = next;
   logger.info({ action: next ? "scanner.paused" : "scanner.resumed" }, next ? "scanner paused" : "scanner resumed");
+  // Resuming interrupts the idle sleep so work restarts now, not in a minute.
+  if (!next) wake?.();
 }
 
 async function loop(): Promise<void> {
@@ -163,23 +167,41 @@ async function loop(): Promise<void> {
 }
 
 async function runCycle(): Promise<void> {
-  const startedAt = Date.now();
-  lastCycleStartedAt = startedAt;
-
-  await prune();
+  // A cycle in flight keeps its start time across pauses and restarts. That
+  // timestamp is the whole resume mechanism: anything scanned since it began
+  // is already done, so the work left is derivable rather than remembered.
+  const resuming = cycleStartedAt !== null;
+  if (!resuming) {
+    cycleStartedAt = Date.now();
+    lastCycleStartedAt = cycleStartedAt;
+    // Only on a fresh cycle. Re-pruning on every resume would be wasted work.
+    await prune();
+  }
+  const startedAt = cycleStartedAt!;
 
   const facilities = await facilityRepository.listBookable();
+  const pending = resuming
+    ? facilities.filter((f) => !f.lastScannedAt || f.lastScannedAt.getTime() < startedAt)
+    : facilities;
+
+  progressTotal = facilities.length;
+  progress = facilities.length - pending.length;
+  if (resuming) {
+    logger.info({ action: "scanner.cycle_resumed", progress, progressTotal }, "resuming cycle where it stopped");
+  }
+
   let scanned = 0;
   let failed = 0;
-  progress = 0;
-  progressTotal = facilities.length;
 
-  for (const facility of facilities) {
+  for (const facility of pending) {
     // Checked per campground rather than per cycle: a sweep takes half an hour,
-    // and "pause" that waits half an hour is not a pause.
+    // and a pause that waits half an hour is not a pause.
     if (paused) {
       logger.info({ action: "scanner.pause_break", progress, progressTotal }, "paused mid-cycle");
-      break;
+      // Deliberately leaves cycleStartedAt set and returns without completing:
+      // a half-swept catalog is not a cycle, and counting it as one would put
+      // a fictional duration on the admin panel.
+      return;
     }
     current = facility.name;
     currentPark = facility.park.name;
@@ -200,19 +222,21 @@ async function runCycle(): Promise<void> {
 
   cycleNumber++;
   lastCycleScanned = scanned;
+  lastCycleFailed = failed;
+  lastCycleDurationMs = Date.now() - startedAt;
+  cycleStartedAt = null;
+
   const heap = process.memoryUsage();
   logger.info(
     {
-      action: "scanner.memory",
+      action: "scanner.cycle_complete",
+      cycleNumber,
+      scanned,
+      failed,
+      durationMs: lastCycleDurationMs,
       heapUsedMb: Math.round(heap.heapUsed / 1024 / 1024),
       rssMb: Math.round(heap.rss / 1024 / 1024),
     },
-    "memory after cycle",
-  );
-  lastCycleFailed = failed;
-  lastCycleDurationMs = Date.now() - startedAt;
-  logger.info(
-    { action: "scanner.cycle_complete", cycleNumber, scanned, failed, durationMs: lastCycleDurationMs },
     "scan cycle complete",
   );
 
@@ -251,9 +275,25 @@ async function prune(): Promise<void> {
   }
 }
 
+/**
+ * Sleep that can be cut short.
+ *
+ * Without this, resuming waits out the full idle sleep before anything
+ * happens — a pause that takes effect in seconds but a resume that takes a
+ * minute, which reads as a broken button rather than a slow one.
+ */
+let wake: (() => void) | null = null;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    const timer = setTimeout(finish, ms);
     timer.unref?.();
+    wake = finish;
+
+    function finish() {
+      clearTimeout(timer);
+      wake = null;
+      resolve();
+    }
   });
 }

@@ -133,7 +133,9 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 <dd className="font-medium tabular-nums">
                   {scanner.progressTotal === 0
                     ? "—"
-                    : `${Math.round((scanner.progress / scanner.progressTotal) * 100)}% · ${scanner.progress}/${scanner.progressTotal}`}
+                    : `${Math.round((scanner.progress / scanner.progressTotal) * 100)}% · ${scanner.progress}/${scanner.progressTotal}${
+                        scanner.paused ? " · held" : ""
+                      }`}
                 </dd>
                 {scanner.progressTotal > 0 && (
                   <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">

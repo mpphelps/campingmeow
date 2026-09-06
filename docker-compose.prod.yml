@@ -7,6 +7,10 @@ services:
       dockerfile: Dockerfile
     image: campingmeow:latest
     restart: unless-stopped
+    # tini as PID 1: forwards signals to the server and reaps orphans. PID 1
+    # has unusual signal semantics in Linux; this makes them ordinary, so
+    # `docker stop` shuts down cleanly instead of waiting out the timeout.
+    init: true
     ports:
       - "3001:3000"
     env_file:
