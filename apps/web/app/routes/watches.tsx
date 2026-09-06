@@ -72,8 +72,7 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
           ))}
         </div>
         <div className="mt-1 text-muted-foreground">
-          Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · anytime in the booking
-          window
+          Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · next nine weeks
         </div>
       </div>
       <fetcher.Form method="post">
@@ -100,7 +99,7 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
 
       {watches.length === 0 ? (
         <p className="mt-8 text-sm text-muted-foreground">
-          No watches yet. <Link to="/parks" className="underline underline-offset-2">Browse parks</Link> and pick a campground to
+          No watches yet. <Link to="/" className="underline underline-offset-2">Browse parks</Link> and pick a campground to
           watch.
         </p>
       ) : (

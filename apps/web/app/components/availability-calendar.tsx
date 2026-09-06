@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Alert } from "@campingmeow/ui/components/alert";
 import { Calendar } from "@campingmeow/ui/components/calendar";
+import { timeAgo } from "~/lib/time";
 
 /**
  * A month of availability, one month at a time.
@@ -88,11 +89,3 @@ export function AvailabilityCalendar({
   );
 }
 
-function timeAgo(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}

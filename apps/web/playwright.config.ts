@@ -89,13 +89,11 @@ export default defineConfig({
       // ids are fake, and background scans fire without a test awaiting them.
       RC_API_OFFLINE: "1",
       // The scanner would otherwise start picking up seeded facilities the
-      // moment a test creates one. RC_API_OFFLINE already blocks the calls;
-      // this stops the loop existing at all.
+      // moment a test creates one. This also stops the notifier, which the
+      // scanner now calls at the end of each cycle — tests drive
+      // notificationService.runOnce() directly instead. RESEND_API_KEY is
+      // deliberately absent from this allowlist, so nothing is ever sent.
       DISABLE_SCANNER: "1",
-      // Tests drive notificationService.runOnce() directly; a background loop
-      // would race them. RESEND_API_KEY is deliberately absent from this
-      // allowlist, so the sender falls back to the stub and nothing is sent.
-      DISABLE_NOTIFIER: "1",
       AUTH0_DOMAIN: process.env.AUTH0_DOMAIN ?? "test.auth0.com",
       AUTH0_CLIENT_ID: process.env.AUTH0_CLIENT_ID ?? "test-client-id",
       AUTH0_CLIENT_SECRET: process.env.AUTH0_CLIENT_SECRET ?? "test-client-secret",

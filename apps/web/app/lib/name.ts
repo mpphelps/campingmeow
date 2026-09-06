@@ -11,6 +11,3 @@ export function splitName(name: string): SplitName {
   };
 }
 
-export function displayName(user: { firstName: string; lastName: string | null }): string {
-  return user.lastName ? `${user.firstName} ${user.lastName}` : user.firstName;
-}

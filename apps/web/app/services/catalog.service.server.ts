@@ -13,13 +13,6 @@ export interface CatalogSyncResult {
   facilitiesDeactivated: number;
 }
 
-export interface ParkListItem {
-  id: string;
-  name: string;
-  city: string | null;
-  facilityCount: number;
-}
-
 export interface ParkDetail {
   id: string;
   name: string;
@@ -34,10 +27,19 @@ export interface FacilityDetail {
   parkName: string;
 }
 
+/** Why a campground can't be watched, in words a user can act on. */
+const UNWATCHABLE_REASON: Record<string, string> = {
+  first_come_first_served: "First-come, first-served — not reservable online",
+  no_inventory: "No reservable sites right now",
+};
+
 export interface FacilityPickerItem {
   id: string;
   name: string;
   parkName: string;
+  /** False when a watch on this could never fire — nothing is reservable. */
+  watchable: boolean;
+  unwatchableReason: string | null;
 }
 
 export interface ParkBrowseItem {
@@ -66,7 +68,6 @@ function titleCaseCity(city: string | null): string | null {
 
 export const catalogService = {
   sync,
-  listParks,
   listParksWithFacilities,
   getParkDetail,
   getFacilityDetail,
@@ -79,7 +80,7 @@ export const catalogService = {
  * filtering happen instantly as the user types.
  */
 async function listParksWithFacilities(): Promise<ParkBrowseItem[]> {
-  const parks = await parkRepository.searchActiveWithFacilities(null);
+  const parks = await parkRepository.listActiveWithFacilities();
   return parks.map((park) => ({
     id: park.id,
     name: park.name,
@@ -94,10 +95,24 @@ async function listParksWithFacilities(): Promise<ParkBrowseItem[]> {
  * Active facilities with park names for the watch-form picker, optionally
  * limited to specific parks or facilities.
  */
+/**
+ * Campgrounds for the watch picker, including the ones that can't be watched.
+ *
+ * Non-bookable campgrounds are shown but disabled, with the reason. Hiding them
+ * would leave someone wondering where a campground went; saying "first-come,
+ * first-served" tells them something genuinely useful about a place they might
+ * otherwise drive to expecting a reservation.
+ */
 async function listFacilityPicker(filter?: { parkIds?: string[]; facilityIds?: string[] }): Promise<FacilityPickerItem[]> {
   const facilities = await facilityRepository.listActiveWithPark(filter);
   return facilities
-    .map((f) => ({ id: f.id, name: f.name, parkName: f.park.name }))
+    .map((f) => ({
+      id: f.id,
+      name: f.name,
+      parkName: f.park.name,
+      watchable: f.status === "bookable",
+      unwatchableReason: f.status === "bookable" ? null : (UNWATCHABLE_REASON[f.status] ?? null),
+    }))
     .sort((a, b) => a.parkName.localeCompare(b.parkName) || a.name.localeCompare(b.name));
 }
 
@@ -111,17 +126,6 @@ async function getFacilityDetail(facilityId: string): Promise<FacilityDetail | n
     parkId: facility.park.id,
     parkName: facility.park.name,
   };
-}
-
-/** Active parks, optionally filtered by name/city, shaped for the browse page. */
-async function listParks(query: string | null): Promise<ParkListItem[]> {
-  const parks = await parkRepository.searchActive(query);
-  return parks.map((park) => ({
-    id: park.id,
-    name: park.name,
-    city: titleCaseCity(park.city),
-    facilityCount: park._count.facilities,
-  }));
 }
 
 /** One park with its active facilities, or null if unknown/inactive. */

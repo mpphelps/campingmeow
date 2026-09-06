@@ -22,6 +22,20 @@ export interface EmailMessage {
   headers?: Record<string, string>;
 }
 
+/**
+ * Resend refused the send because the account's daily quota is gone.
+ *
+ * Distinct from every other failure: retrying it sooner cannot help, and it
+ * means *all* remaining mail this pass will fail too. Their rate-limit 429
+ * (too many requests per second) is a different thing and stays a plain error.
+ */
+export class EmailQuotaExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmailQuotaExceededError";
+  }
+}
+
 export interface EmailSender {
   /** Human-readable, shown in the admin panel so a misconfigured prod is visible. */
   readonly name: string;
@@ -64,10 +78,23 @@ class ResendSender implements EmailSender {
       }),
     });
 
+    // Resend reports what is left of the daily allowance on every response.
+    // It is the authoritative number — our own count can't see mail sent from
+    // the dashboard or another app on the same account — so it is worth having
+    // in the log even though we pace ourselves off our own tally.
+    const remaining = response.headers.get("x-resend-daily-quota");
+    if (remaining) logger.info({ action: "email.quota", remaining }, "Resend daily quota remaining");
+
     if (!response.ok) {
+      const body = await response.text().catch(() => response.statusText);
+      // 429 covers both "too fast" and "out of quota for the day"; only the
+      // error name tells them apart, and they need opposite responses.
+      if (response.status === 429 && body.includes("daily_quota_exceeded")) {
+        throw new EmailQuotaExceededError(`Resend daily quota exhausted: ${body}`);
+      }
       // Surfaced to the caller so the events stay unnotified and go out on the
       // next pass, rather than being marked sent and lost.
-      throw new Error(`Resend ${response.status}: ${await response.text().catch(() => response.statusText)}`);
+      throw new Error(`Resend ${response.status}: ${body}`);
     }
   }
 }

@@ -61,6 +61,16 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
     const facilities = await facilityRepository.listActiveByIds(facilityIds);
     if (facilities.length !== facilityIds.length) {
       fields.facilityIds = "One or more campgrounds are unknown.";
+    } else {
+      // A watch on these could never fire: nothing is reservable, so no
+      // cancellation can happen. Checked here too, not just in the picker,
+      // because the form posts ids.
+      const unwatchable = facilities.filter((f) => f.status !== "bookable");
+      if (unwatchable.length > 0) {
+        fields.facilityIds = `${unwatchable
+          .map((f) => f.name)
+          .join(", ")} can't be watched — sites there aren't reservable online, so nothing can open up.`;
+      }
     }
   }
 
@@ -69,10 +79,7 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
   if (Object.keys(fields).length === 0) {
     const existing = await watchRepository.countActiveByUserId(userId);
     if (existing >= MAX_WATCHES_PER_USER) {
-      fields.facilityIds =
-        MAX_WATCHES_PER_USER === 1
-          ? "You already have a watch. Delete it first — one watch per person while we're in early access."
-          : `You already have ${existing} watches, which is the limit of ${MAX_WATCHES_PER_USER}.`;
+      fields.facilityIds = `You already have ${existing} watches, which is the limit. Delete one to make room.`;
     }
   }
 

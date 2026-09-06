@@ -76,6 +76,13 @@ model Facility {
   updatedAt       DateTime        @updatedAt
   // Null = never scanned. Drives "we haven't checked this yet" vs "nothing open".
   lastScannedAt   DateTime?
+  // What the last scan found. Only `bookable` campgrounds are scanned and
+  // offered in the watch picker — a watch on the others could never fire,
+  // because nothing is reservable and so no cancellation can happen.
+  status          FacilityStatus @default(bookable)
+  // Web-bookable units seen on the last scan. Kept for admin visibility: the
+  // status says what a campground is, this says how big it is.
+  bookableSites   Int            @default(0)
   watches         WatchFacility[]
   slots           AvailabilitySlot[]
   events          AvailabilityEvent[]
@@ -159,6 +166,15 @@ model AvailabilityEvent {
   @@index([facilityId, detectedAt])
   // The notifier's query: unnotified opens, oldest first.
   @@index([type, notifiedAt])
+}
+
+enum FacilityStatus {
+  /// Has web-bookable sites. The only status the scanner works on.
+  bookable
+  /// ReserveCalifornia returns no units at all — closed, seasonal, or retired.
+  no_inventory
+  /// Units exist but none allow web booking: first-come, first-served.
+  first_come_first_served
 }
 
 enum AvailabilityEventType {

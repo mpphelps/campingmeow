@@ -11,7 +11,7 @@ import { ValidationError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
 import type { AuthUser } from "~/services/auth.service.server";
 import { catalogService, type FacilityPickerItem } from "~/services/catalog.service.server";
-import { watchOrchestratorService } from "~/services/watch-orchestrator.service.server";
+import { watchService } from "~/services/watch.service.server";
 
 const DAYS = [
   { value: 0, label: "Sun" },
@@ -49,7 +49,7 @@ export const loader = withAuth(async ({ request }: Route.LoaderArgs & { user: Au
 export const action = withAuth(async ({ request, user }: Route.ActionArgs & { user: AuthUser }) => {
   const formData = await request.formData();
   try {
-    await watchOrchestratorService.createWatchAndScan(user.id, {
+    await watchService.createWatch(user.id, {
       facilityIds: formData.getAll("facilityIds").map(String),
       checkinDays: formData.getAll("checkinDays").map(Number),
       nights: Number(formData.get("nights")),
@@ -95,17 +95,25 @@ function FacilityPicker({
           <p className="text-sm text-muted-foreground">No campgrounds match.</p>
         ) : (
           visible.map((facility) => (
-            <div key={facility.id} className="flex items-center gap-2">
+            <div key={facility.id} className="flex items-start gap-2">
               <Checkbox
                 id={`pick-${facility.id}`}
                 name="facilityIds"
                 value={facility.id}
-                defaultChecked={preselectedIds.includes(facility.id)}
+                defaultChecked={facility.watchable && preselectedIds.includes(facility.id)}
+                disabled={!facility.watchable}
                 aria-label={`${facility.parkName} · ${facility.name}`}
+                className="mt-0.5"
               />
-              <Label htmlFor={`pick-${facility.id}`}>
+              <Label htmlFor={`pick-${facility.id}`} className={facility.watchable ? undefined : "opacity-60"}>
                 <span className="text-muted-foreground">{facility.parkName} · </span>
                 {facility.name}
+                {/* Shown rather than hidden: "first-come, first-served" is
+                    genuinely useful to know about a place you might otherwise
+                    drive to expecting a reservation. */}
+                {!facility.watchable && (
+                  <span className="block text-xs font-normal text-muted-foreground">{facility.unwatchableReason}</span>
+                )}
               </Label>
             </div>
           ))
@@ -159,8 +167,8 @@ export default function NewWatch({ loaderData, actionData }: Route.ComponentProp
         </div>
 
         <p className="text-sm text-muted-foreground">
-          A watch covers the whole booking window and rolls forward as ReserveCalifornia opens new dates — there&apos;s no end
-          date to keep up to date, and nothing to renew.
+          A watch covers the next nine weeks and rolls forward each day, so there&apos;s no end date to maintain and nothing to
+          renew. For dates further out, browse ReserveCalifornia directly.
         </p>
 
         <Button type="submit">Create watch</Button>

@@ -1,6 +1,8 @@
 import { prisma } from "@campingmeow/database";
 import { test, expect } from "../test-fixtures";
 import { createPark, createFacility, createWatch, createSlots, nextWeekday, isoDate } from "../utilities/utilities";
+import { availabilityRepository } from "../../app/repositories/availability.repository.server";
+import { HORIZON_DAYS } from "../../app/lib/limits";
 
 /**
  * The availability calendar. Green means two different things by design:
@@ -98,5 +100,39 @@ test.describe("watch calendar", () => {
     await expect(cell(friA)).toHaveClass(/bg-primary/);
     await expect(cell(friB)).not.toHaveClass(/bg-primary/);
     expect(isoDate(friA)).not.toBe(isoDate(friB));
+  });
+});
+
+/**
+ * The window shrank from 180 to 63 days. `replaceWindow` only rewrites the range
+ * it replaces, so anything outside is never updated *and* never deleted — that
+ * stranded ~985k rows, a third of them marked free, which the calendar would
+ * have shown as current. The prune therefore trims both edges.
+ */
+test.describe("scan window bounds", () => {
+  test.use({ user: null });
+
+  test("prunes nights on both sides of the scanned window", async () => {
+    const park = await createPark({ name: "Window Park" });
+    const facility = await createFacility({ name: "Window Camp", parkId: park.id, lastScannedAt: new Date() });
+
+    const day = (offset: number) => {
+      const d = new Date();
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() + offset);
+      return d;
+    };
+
+    await createSlots({ facilityId: facility.id, dates: [day(-1), day(10), day(200)] });
+    expect(await prisma.availabilitySlot.count({ where: { facilityId: facility.id } })).toBe(3);
+
+    const today = day(0);
+    const horizon = day(HORIZON_DAYS);
+    await availabilityRepository.deleteSlotsBefore(today);
+    await availabilityRepository.deleteSlotsAfter(horizon);
+
+    const left = await prisma.availabilitySlot.findMany({ where: { facilityId: facility.id } });
+    expect(left).toHaveLength(1);
+    expect(left[0]!.date.toISOString().slice(0, 10)).toBe(day(10).toISOString().slice(0, 10));
   });
 });

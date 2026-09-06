@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 
-import { Alert } from "@campingmeow/ui/components/alert";
+import { Alert, AlertTitle } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@campingmeow/ui/components/card";
 import { Separator } from "@campingmeow/ui/components/separator";
@@ -30,6 +30,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const sync = useFetcher<CatalogSyncResult>();
   const syncing = sync.state !== "idle";
   const scanner = dashboard.scanner;
+  const recheck = useFetcher<{ checked: number; nowBookable: string[] }>();
   const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
@@ -46,8 +47,8 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
     { label: "Active watches", value: dashboard.stats.watchCount },
     { label: "Watched campgrounds", value: dashboard.stats.watchedFacilityCount },
     { label: "Requests queued", value: dashboard.queueDepth },
-    { label: "Scanned / hr", value: scanner.scannedLastHour },
-    { label: "Emails today", value: notifier.emailsSentToday },
+    { label: "Cycle (min)", value: scanner.lastCycleDurationMs === null ? "—" : Math.round(scanner.lastCycleDurationMs / 60000) },
+    { label: "Emails (24h)", value: `${notifier.quota.sentLast24h}/${notifier.quota.limit}` },
   ];
 
   return (
@@ -92,14 +93,17 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-sm text-muted-foreground">
-              Runs continuously, always scanning whichever campground is most overdue — watched ones first (target: under an hour
-              old), then the rest of the catalog (under a day). Every request queues at a global one-per-second gate.
+              Runs continuously over every bookable campground across a 63-day window, always taking the most overdue. A full
+              cycle is ~17 minutes. Campgrounds with no inventory or first-come-first-served sites are never scanned — nothing
+              there can open up. Every request queues at a global one-per-second gate.
             </p>
 
             {dashboard.rateLimit.blocked && (
               <Alert variant="destructive" className="mb-3">
-                ReserveCalifornia has rate-limited us. Scanning is paused until{" "}
-                {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
+                <AlertTitle>Blocked by ReserveCalifornia</AlertTitle>
+                Scanning <strong>and email</strong> are stopped until {new Date(dashboard.rateLimit.until!).toLocaleTimeString()}.
+                {notifier.pendingEvents > 0 && ` ${notifier.pendingEvents} openings are waiting to be sent.`} This is an incident,
+                not a hiccup — a 429 means we exceeded their rate limit and the block can last hours.
               </Alert>
             )}
 
@@ -107,34 +111,56 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               <div>
                 <dt className="text-muted-foreground">Status</dt>
                 <dd className="font-medium">
-                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Idle — nothing overdue"}
+                  {!scanner.running ? "Stopped" : scanner.current ? `Scanning ${scanner.current}` : "Between cycles"}
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Overdue</dt>
+                <dt className="text-muted-foreground">Last cycle</dt>
                 <dd className="font-medium tabular-nums">
-                  {scanner.watchedOverdue} watched · {scanner.catalogOverdue} catalog
+                  {scanner.lastCycleDurationMs === null
+                    ? "in progress"
+                    : `${Math.round(scanner.lastCycleDurationMs / 60000)} min · ${scanner.lastCycleScanned} scanned${
+                        scanner.lastCycleFailed > 0 ? ` · ${scanner.lastCycleFailed} failed` : ""
+                      }`}
                 </dd>
               </div>
               <div>
-                <dt className="text-muted-foreground">Oldest watched scan</dt>
-                <dd className="font-medium">{scanner.oldestWatchedScan ? timeAgo(scanner.oldestWatchedScan) : "never"}</dd>
+                <dt className="text-muted-foreground">Cycles completed</dt>
+                <dd className="font-medium tabular-nums">{scanner.cycleNumber}</dd>
               </div>
-              <div>
-                <dt className="text-muted-foreground">Oldest catalog scan</dt>
-                <dd className="font-medium">{scanner.oldestCatalogScan ? timeAgo(scanner.oldestCatalogScan) : "never"}</dd>
+              <div className="col-span-2">
+                <dt className="text-muted-foreground">Catalog</dt>
+                <dd className="font-medium tabular-nums">
+                  {scanner.byStatus.bookable ?? 0} bookable · {scanner.byStatus.no_inventory ?? 0} no inventory ·{" "}
+                  {scanner.byStatus.first_come_first_served ?? 0} first-come
+                </dd>
               </div>
             </dl>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              A rising overdue count or an oldest scan past its target means we are not keeping up.
+              A cycle that keeps growing means we are falling behind — every campground is scanned every pass, so the duration is
+              the whole story.
             </p>
+
+            <recheck.Form method="post" action="/api/recheck-facilities" className="mt-3">
+              <Button type="submit" variant="outline" size="sm" disabled={recheck.state !== "idle"}>
+                {recheck.state !== "idle" ? "Re-checking…" : "Re-check non-bookable campgrounds"}
+              </Button>
+            </recheck.Form>
+            {recheck.data && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Checked {recheck.data.checked}.{" "}
+                {recheck.data.nowBookable.length === 0
+                  ? "None have inventory yet."
+                  : `Now bookable: ${recheck.data.nowBookable.join(", ")}.`}
+              </p>
+            )}
 
             <Separator className="mt-4" />
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <dt className="text-muted-foreground">Notifier</dt>
-                <dd className="font-medium">{notifier.running ? "Running (every 10 min)" : "Stopped"}</dd>
+                <dd className="font-medium">Runs after each scan cycle</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Email via</dt>
@@ -144,7 +170,25 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 <dt className="text-muted-foreground">Openings awaiting email</dt>
                 <dd className="font-medium tabular-nums">{notifier.pendingEvents}</dd>
               </div>
+              <div>
+                {/* Trailing 24h, not since midnight: Resend's free quota
+                    resets 24 hours after each send, not at a fixed hour. */}
+                <dt className="text-muted-foreground">Emails sent (rolling 24h)</dt>
+                <dd className="font-medium tabular-nums">
+                  {notifier.quota.sentLast24h} / {notifier.quota.limit}
+                  <span className="ml-2 font-normal text-muted-foreground">{notifier.quota.remaining} left</span>
+                </dd>
+              </div>
             </dl>
+
+            {notifier.quota.paused && (
+              <Alert variant="warning" className="mt-3">
+                <AlertTitle>Notifications paused — daily email limit reached</AlertTitle>
+                Openings are still being found and stored; they are held unsent and go out when the allowance returns
+                {notifier.quota.resumesAt ? ` (around ${new Date(notifier.quota.resumesAt).toLocaleString()})` : ""}. Raising
+                the Resend plan lifts the cap.
+              </Alert>
+            )}
 
             {notifier.sender.startsWith("stub") && (
               <Alert variant="warning" className="mt-3">
@@ -180,13 +224,5 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   );
 }
 
-function timeAgo(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";

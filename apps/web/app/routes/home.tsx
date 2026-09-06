@@ -4,6 +4,7 @@ import { Link, useFetcher, useNavigate } from "react-router";
 import { MapPinIcon, TreePineIcon } from "lucide-react";
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@campingmeow/ui/components/accordion";
+import { Alert, AlertTitle } from "@campingmeow/ui/components/alert";
 import { Button } from "@campingmeow/ui/components/button";
 import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
@@ -15,12 +16,18 @@ import { ParkBanner } from "~/components/park-banner";
 import { MAX_WATCH_FACILITIES } from "~/lib/limits";
 import { distanceMiles } from "~/lib/geo";
 import { catalogService, type ParkBrowseItem } from "~/services/catalog.service.server";
+import { notificationService } from "~/services/notification.service.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const parks = await catalogService.listParksWithFacilities();
+  const [parks, quota] = await Promise.all([
+    catalogService.listParksWithFacilities(),
+    // Someone whose alerts are paused would otherwise read the silence as
+    // "nothing has opened", which is the opposite of what is happening.
+    notificationService.getQuotaStatus(),
+  ]);
   // ?q= only seeds the box (e.g. from a shared /parks?q= link); all filtering
   // is client-side so it updates on every keystroke.
-  return { parks, initialQuery: new URL(request.url).searchParams.get("q") ?? "" };
+  return { parks, quota, initialQuery: new URL(request.url).searchParams.get("q") ?? "" };
 }
 
 type Located = ParkBrowseItem & { distance: number | null };
@@ -142,7 +149,7 @@ function ParkRow({
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { parks, initialQuery } = loaderData;
+  const { parks, quota, initialQuery } = loaderData;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState(initialQuery);
   const [origin, setOrigin] = useState<{ latitude: number; longitude: number; label: string } | null>(null);
@@ -202,15 +209,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }, [parks, query, origin, radius]);
 
   /**
-   * Every selected campground costs ~10 seconds of ReserveCalifornia requests,
-   * so selection is capped rather than letting someone tick all 500 and queue
-   * over an hour of continuous scanning.
+   * Selecting campgrounds costs us nothing to scan — the sweep covers all of
+   * them regardless. The cap keeps one watch comprehensible, and bounds how
+   * much a single email can be about. See MAX_WATCH_FACILITIES in lib/limits.
    */
   function capped(next: Set<string>, previous: Set<string>): Set<string> {
     if (next.size <= MAX_WATCH_FACILITIES) return next;
     toast({
       title: `That's the limit — ${MAX_WATCH_FACILITIES} campgrounds`,
-      description: "We check each one live against ReserveCalifornia. Search or watch these, then come back for more.",
+      description: "That's as much as one watch can cover. Search or watch these, then come back for more.",
       variant: "destructive",
     });
     return previous;
@@ -272,6 +279,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <div>
+      {quota.paused && (
+        <Alert variant="warning" className="mb-4">
+          <AlertTitle>Email alerts are paused</AlertTitle>
+          We&apos;ve hit today&apos;s free-tier email limit, so we&apos;re not sending right now. Openings are still being
+          tracked and held — you&apos;ll get them once sending resumes
+          {quota.resumesAt ? ` (about ${resumesIn(quota.resumesAt)})` : ""}. Nothing is lost, and your watches keep running.
+        </Alert>
+      )}
+
       <div className="-mt-6 mb-8 overflow-hidden rounded-xl border sm:-mt-8">
         <ParkBanner className="block h-36 w-full sm:h-48" />
         {/* Caption block, like the print series: solid field, title in cream. */}
@@ -280,8 +296,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             Find open California campsites
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-[#F2E4CC]/70">
-            Pick the parks or campgrounds you want, then search what&apos;s open right now — or set up a watch and we&apos;ll
-            email you the moment ReserveCalifornia has a matching opening.
+            The good sites are gone the day booking opens. But people cancel constantly, and those sites go back on
+            ReserveCalifornia with nobody watching. We watch instead — every bookable state park campground, for the next
+            nine weeks — and email you when one matches the dates you want.
           </p>
         </div>
       </div>
@@ -392,3 +409,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 }
 
 export { PageErrorBoundary as ErrorBoundary } from "~/components/page-error-boundary";
+
+/** "in about 3 hours" — how long until the oldest batch ages out of the window. */
+function resumesIn(iso: string): string {
+  const minutes = Math.round((Date.parse(iso) - Date.now()) / 60_000);
+  if (minutes <= 1) return "any moment";
+  if (minutes < 60) return `in about ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return `in about ${hours} hour${hours === 1 ? "" : "s"}`;
+}

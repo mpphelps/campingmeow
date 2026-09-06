@@ -8,8 +8,9 @@ import {
   getRateLimitState,
   type ISODate,
 } from "@campingmeow/scanner";
+import type { FacilityStatus } from "@campingmeow/database";
 import { ValidationError } from "~/lib/errors";
-import { MAX_SEARCH_FACILITIES } from "~/lib/limits";
+import { HORIZON_DAYS, MAX_SEARCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import {
   availabilityRepository,
@@ -17,12 +18,12 @@ import {
   type SlotInput,
 } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
+import { authService, type AuthUser } from "./auth.service.server";
+import { ADMIN_PERMISSION } from "./admin.service.server";
 
 // Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
 // packages/scanner/src/rate-limit.ts), not here — otherwise concurrent callers
 // each pace themselves and the real rate is however many are running at once.
-/** How far ahead we scan; ReserveCalifornia books ~6 months out. */
-const HORIZON_DAYS = 180;
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -72,6 +73,8 @@ export interface ScanSummary {
   opened: number;
   /** Nights that flipped free -> booked. Kept so a re-open is a fresh event. */
   closed: number;
+  /** What the grid said this campground is. */
+  status: FacilityStatus;
 }
 
 // Domain service for campsite availability.
@@ -80,12 +83,41 @@ export interface ScanSummary {
 //   Read path : answer searches from storage. Never calls ReserveCalifornia.
 export const availabilityService = {
   searchOpenings,
+  recheckNonBookable,
   getFacilityCalendar,
   getWatchCalendar,
   getRateLimitState,
   getQueueDepth,
   scanFacility,
 };
+
+/**
+ * Re-scan every campground currently marked non-bookable, to see whether any
+ * has gained inventory.
+ *
+ * Manual on purpose. Self-healing is not built yet: a seasonal campground
+ * demoted in winter stays demoted until someone runs this, and re-checking
+ * today's window won't reveal a campground that only opens in summer. Both are
+ * known gaps, written down rather than papered over.
+ */
+async function recheckNonBookable(user: AuthUser): Promise<{ checked: number; nowBookable: string[] }> {
+  authService.requirePermission(user, ADMIN_PERMISSION);
+  const candidates = await facilityRepository.listNonBookable();
+  logger.info({ action: "recheck.start", count: candidates.length, userId: user.id }, "re-checking non-bookable campgrounds");
+
+  const nowBookable: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const summary = await scanFacility(candidate.id);
+      if (summary.status === "bookable") nowBookable.push(summary.facilityName);
+    } catch (err) {
+      logger.warn({ action: "recheck.failed", facilityId: candidate.id, err }, "re-check failed");
+    }
+  }
+
+  logger.info({ action: "recheck.complete", checked: candidates.length, promoted: nowBookable.length }, "re-check complete");
+  return { checked: candidates.length, nowBookable };
+}
 
 // ---------------------------------------------------------------- read path
 
@@ -114,9 +146,18 @@ function parseSearch(input: SearchOpeningsInput): SearchQuery {
   else if (facilityIds.length > MAX_SEARCH_FACILITIES)
     fields.facilityIds = `Pick at most ${MAX_SEARCH_FACILITIES} campgrounds at a time (you picked ${facilityIds.length}).`;
 
+  // We only hold HORIZON_DAYS of nights, so a date past it can't be answered.
+  // Silently clamping would report "nothing available" for a window we never
+  // looked at, which reads as "booked solid" — the worst thing we could say.
   const today = fmt(new Date());
+  const horizon = addDays(today, HORIZON_DAYS);
+  if (input.startDate && input.startDate > horizon)
+    fields.startDate = `We only track the next ${HORIZON_DAYS} days (through ${horizon}).`;
+  if (input.endDate && input.endDate > horizon)
+    fields.endDate = `We only track the next ${HORIZON_DAYS} days (through ${horizon}).`;
+
   const windowStart = input.startDate && input.startDate > today ? input.startDate : today;
-  const windowEnd = input.endDate ?? addDays(today, HORIZON_DAYS);
+  const windowEnd = input.endDate ?? horizon;
   if (windowEnd < windowStart) fields.endDate = "End date must be on or after the start date.";
 
   if (Object.keys(fields).length > 0) throw new ValidationError(fields);
@@ -150,6 +191,9 @@ export interface CalendarAvailability {
   facilityId: string;
   facilityName: string;
   parkName: string;
+  /** ReserveCalifornia's own ids, for deep-linking past our 63-day window. */
+  rcPlaceId: number;
+  rcFacilityId: number;
   /** yyyy-MM-dd nights to mark available. */
   freeDates: ISODate[];
   /** Null = never scanned, so the calendar means "unknown", not "nothing free". */
@@ -177,6 +221,8 @@ async function getFacilityCalendar(facilityId: string): Promise<CalendarAvailabi
     facilityId: facility.id,
     facilityName: facility.name,
     parkName: facility.park.name,
+    rcPlaceId: facility.park.rcPlaceId,
+    rcFacilityId: facility.rcFacilityId,
     freeDates: [...new Set(slots.map((slot) => fmt(slot.date)))].sort(),
     lastScannedAt: facility.lastScannedAt ? facility.lastScannedAt.toISOString() : null,
     windowStart,
@@ -365,6 +411,18 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
 
   await availabilityRepository.replaceWindow(facility.id, toDate(start), toDate(end), slots, events);
 
+  // What the grid returned tells us what kind of campground this is. Units with
+  // none bookable means first-come, first-served; no units at all means there
+  // is nothing here to reserve. Neither can ever produce a cancellation, so
+  // neither is worth scanning again.
+  const status =
+    availability.sites.length > 0
+      ? "bookable"
+      : availability.totalUnits > 0
+        ? "first_come_first_served"
+        : "no_inventory";
+  await facilityRepository.setStatus(facility.id, status, availability.sites.length);
+
   const summary: ScanSummary = {
     facilityId: facility.id,
     facilityName: facility.name,
@@ -373,6 +431,7 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     freeSlots: slots.filter((s) => s.isFree).length,
     opened: events.filter((e) => e.type === "opened").length,
     closed: events.filter((e) => e.type === "closed").length,
+    status,
   };
   logger.info({ action: "scan.facility.complete", ...summary }, "facility scan complete");
   return summary;

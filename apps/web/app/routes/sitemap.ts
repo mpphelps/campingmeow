@@ -1,4 +1,4 @@
-const SITE_URL = "https://campingmeow.com";
+import { SITE_URL } from "~/lib/site";
 
 export function loader() {
   const today = new Date().toISOString().slice(0, 10);

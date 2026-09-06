@@ -57,6 +57,8 @@ export type CreateFacilityOverrides = {
   parkId: string;
   /** Null (default) = never scanned; drives the "not scanned yet" / unscanned-callout UI on /search. */
   lastScannedAt?: Date | null;
+  /** Only `bookable` campgrounds are scanned or offered in the watch picker. */
+  status?: "bookable" | "no_inventory" | "first_come_first_served";
 };
 
 let facilitySeedCounter = 0;
@@ -72,6 +74,7 @@ export async function createFacility(overrides: CreateFacilityOverrides) {
       allowWebBooking: overrides.allowWebBooking ?? true,
       parkId: overrides.parkId,
       lastScannedAt: overrides.lastScannedAt ?? null,
+      status: overrides.status ?? "bookable",
     },
   });
 }

@@ -3,7 +3,7 @@
 
 export type ISODate = string; // "yyyy-MM-dd"
 
-export const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export type DayName = (typeof DOW)[number];
 
 export function parse(d: ISODate): Date {
@@ -25,9 +25,6 @@ export function dayOfWeek(d: ISODate): DayName {
   return DOW[parse(d).getUTCDay()];
 }
 
-export function sliceKey(d: ISODate): string {
-  return `${d}T00:00:00`;
-}
 
 /** Inclusive list of dates from `start` to `end`. */
 export function eachDay(start: ISODate, end: ISODate): ISODate[] {

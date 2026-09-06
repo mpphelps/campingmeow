@@ -13,4 +13,19 @@ export const emailLogRepository = {
     });
     return result._sum.quantity ?? 0;
   },
+
+  /**
+   * When the oldest batch still inside the window was sent.
+   *
+   * The quota window is a trailing 24 hours, so this is what says when budget
+   * frees up again: that batch ages out first.
+   */
+  async oldestSentAtSince(since: Date): Promise<Date | null> {
+    const row = await prisma.emailLog.findFirst({
+      where: { sentAt: { gte: since } },
+      orderBy: { sentAt: "asc" },
+      select: { sentAt: true },
+    });
+    return row?.sentAt ?? null;
+  },
 };

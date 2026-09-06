@@ -72,6 +72,36 @@ test.describe("search page — form only", () => {
 
     await expect(page.getByText("Nights must be between 1 and 7.")).toBeVisible();
   });
+
+  /**
+   * We only store 63 days. Answering a further-out range would report "nothing
+   * available" for dates we never looked at, which reads as "booked solid" —
+   * the most damaging thing this app could say.
+   */
+  test("refuses a date range past the 63-day window instead of reporting nothing found", async ({ page }) => {
+    const park = await createPark({ name: "Pfeiffer Big Sur" });
+    const facility = await createFacility({ name: "Riverside", parkId: park.id, lastScannedAt: new Date() });
+
+    const wayOut = isoDate(new Date(Date.now() + 200 * 24 * 60 * 60 * 1000));
+    await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=range&from=&to=${wayOut}`);
+
+    await expect(page.getByText("We only track the next 63 days", { exact: false })).toBeVisible();
+    await expect(page.getByText("matching check-in date", { exact: false })).toHaveCount(0);
+  });
+
+  test("bounds the date inputs to the window we actually hold", async ({ page }) => {
+    const park = await createPark({ name: "Mount Tamalpais" });
+    const facility = await createFacility({ name: "Pantoll", parkId: park.id, lastScannedAt: new Date() });
+
+    await page.goto(`/search?facilities=${facility.id}&bounds=range`);
+    await page.getByLabel("Only between specific dates").check();
+
+    const today = isoDate(new Date());
+    const horizon = isoDate(new Date(Date.now() + 63 * 24 * 60 * 60 * 1000));
+    await expect(page.locator("#from")).toHaveAttribute("min", today);
+    await expect(page.locator("#from")).toHaveAttribute("max", horizon);
+    await expect(page.locator("#to")).toHaveAttribute("max", horizon);
+  });
 });
 
 test.describe("search page — results from stored availability", () => {
@@ -115,7 +145,7 @@ test.describe("search page — results from stored availability", () => {
     await page.goto(`/search?facilities=${facility.id}&days=5&nights=1&bounds=anytime`);
 
     await expect(page.getByText("so there's nothing to search", { exact: false })).toBeVisible();
-    await expect(page.getByText("No data yet — a watch will start the first scan.")).toBeVisible();
+    await expect(page.getByText("No data yet — this campground is in the next sweep.")).toBeVisible();
     await expect(page.getByText("not scanned yet")).toBeVisible();
     await expect(page.getByText("We haven't scanned these campgrounds yet.")).toBeVisible();
   });

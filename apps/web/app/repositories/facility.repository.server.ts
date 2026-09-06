@@ -1,4 +1,4 @@
-import { prisma } from "@campingmeow/database";
+import { prisma, type FacilityStatus } from "@campingmeow/database";
 
 export const facilityRepository = {
   async upsertByRcFacilityId(data: {
@@ -21,6 +21,29 @@ export const facilityRepository = {
       data: { active: false },
     });
     return result.count;
+  },
+
+  /** Recorded after every scan, so status is a by-product of work we already do. */
+  async setStatus(id: string, status: FacilityStatus, bookableSites: number) {
+    return prisma.facility.update({ where: { id }, data: { status, bookableSites } });
+  },
+
+  /** Non-bookable campgrounds, for the admin re-check. */
+  async listNonBookable() {
+    return prisma.facility.findMany({
+      where: { active: true, status: { not: "bookable" } },
+      select: { id: true, name: true, status: true },
+      orderBy: { name: "asc" },
+    });
+  },
+
+  async countByStatus() {
+    const rows = await prisma.facility.groupBy({
+      by: ["status"],
+      where: { active: true },
+      _count: { _all: true },
+    });
+    return Object.fromEntries(rows.map((r) => [r.status, r._count._all])) as Record<FacilityStatus, number>;
   },
 
   async findByIdWithPark(id: string) {
@@ -56,51 +79,18 @@ export const facilityRepository = {
     });
   },
 
-  /**
-   * The single query the scanner runs to decide what to do next: the most
-   * overdue campground, nulls (never scanned) first.
-   *
-   * `watchedOnly` narrows to campgrounds covered by an active watch. Passing a
-   * cutoff of `null` means "any age" — used to drain a backlog.
-   */
-  async findMostOverdue(options: { watchedOnly: boolean; scannedBefore: Date }) {
-    return prisma.facility.findFirst({
-      where: {
-        active: true,
-        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
-        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
-      },
-      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
+  /** The one query the sweep needs: everything worth scanning, in a stable order. */
+  async listBookable() {
+    return prisma.facility.findMany({
+      where: { active: true, status: "bookable" },
+      select: { id: true, name: true },
+      orderBy: { id: "asc" },
     });
   },
 
   /** How many campgrounds are past their freshness target — the backlog size. */
-  async countOverdue(options: { watchedOnly: boolean; scannedBefore: Date }) {
-    return prisma.facility.count({
-      where: {
-        active: true,
-        OR: [{ lastScannedAt: null }, { lastScannedAt: { lt: options.scannedBefore } }],
-        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
-      },
-    });
-  },
 
-  /** Worst staleness in the catalog: the health number that actually matters. */
-  async findOldestScan(options: { watchedOnly: boolean }) {
-    return prisma.facility.findFirst({
-      where: {
-        active: true,
-        ...(options.watchedOnly ? { watches: { some: { watch: { active: true } } } } : {}),
-      },
-      orderBy: { lastScannedAt: { sort: "asc", nulls: "first" } },
-      select: { name: true, lastScannedAt: true },
-    });
-  },
 
-  /** Campgrounds scanned since `since` — throughput, derived not counted. */
-  async countScannedSince(since: Date) {
-    return prisma.facility.count({ where: { lastScannedAt: { gte: since } } });
-  },
 
   async listActiveByParkId(parkId: string) {
     return prisma.facility.findMany({

@@ -33,4 +33,4 @@ export type {
   Unit,
 } from "./types.js";
 
-export { addDays, eachDay, dayOfWeek, fmt, sliceKey, type ISODate, type DayName } from "./dates.js";
+export { addDays, eachDay, dayOfWeek, fmt, type ISODate, type DayName } from "./dates.js";

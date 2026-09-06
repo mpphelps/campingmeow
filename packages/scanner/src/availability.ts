@@ -17,17 +17,31 @@ export interface FacilityAvailability {
   facilityName: string;
   minDate: ISODate | null;
   maxDate: ISODate | null;
+  /** Sites a normal person can book online. */
   sites: SiteAvailability[];
+  /**
+   * Every unit the grid returned, bookable or not. The difference between this
+   * and `sites.length` is what distinguishes a first-come, first-served
+   * campground (units exist, none bookable) from one with no inventory at all.
+   */
+  totalUnits: number;
 }
 
-/** Merge one grid response's slices into a site map. */
+/**
+ * Merge one grid response's slices into a site map, and report how many units
+ * it contained in total.
+ *
+ * The total matters: filtering straight to bookable units throws away the only
+ * signal that separates "first-come, first-served" from "nothing here at all".
+ */
 export function mergeGrid(
   grid: GridResponse,
   into: Map<number, SiteAvailability>
-): void {
+): { totalUnits: number } {
   const units = grid.Facility?.Units;
-  if (!units) return;
-  for (const unit of Object.values(units)) {
+  if (!units) return { totalUnits: 0 };
+  const all = Object.values(units);
+  for (const unit of all) {
     // Only sites a normal person can actually book online.
     if (!unit.AllowWebBooking || !unit.IsWebViewable) continue;
     let site = into.get(unit.UnitId);
@@ -39,6 +53,7 @@ export function mergeGrid(
       if (slice.IsFree) site.freeNights.add(slice.Date);
     }
   }
+  return { totalUnits: all.length };
 }
 
 /** Latest date any slice in this response covers, so we can page past it. */
@@ -79,13 +94,15 @@ export async function fetchFacilityAvailability(
   let minDate: ISODate | null = null;
   let maxDate: ISODate | null = null;
 
+  let totalUnits = 0;
   let cursor = startDate;
   while (cursor <= endDate) {
     const grid = await getGrid(facilityId, cursor, 1);
     if (grid.Facility?.Name) facilityName = grid.Facility.Name;
     if (grid.MinDate) minDate = grid.MinDate;
     if (grid.MaxDate) maxDate = grid.MaxDate;
-    mergeGrid(grid, sites);
+    // Highest across the window: a unit missing from one page is still real.
+    totalUnits = Math.max(totalUnits, mergeGrid(grid, sites).totalUnits);
 
     const covered = lastCoveredDate(grid);
     let next = covered ? addDays(covered, 1) : addDays(cursor, FALLBACK_STEP_DAYS);
@@ -103,5 +120,6 @@ export async function fetchFacilityAvailability(
     minDate,
     maxDate,
     sites: [...sites.values()],
+    totalUnits,
   };
 }
