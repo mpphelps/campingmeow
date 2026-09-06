@@ -83,6 +83,16 @@ model Facility {
   // Web-bookable units seen on the last scan. Kept for admin visibility: the
   // status says what a campground is, this says how big it is.
   bookableSites   Int            @default(0)
+  // ReserveCalifornia UnitCategoryIds seen on the last scan, deduplicated.
+  // A campground is usually one category, but "Campground & Cabins" style
+  // sites are genuinely mixed, so this is a set. Raw RC ids: the id->label
+  // mapping lives in app/lib/site-types.ts, so a new category RC invents shows
+  // up as an unknown id rather than silently vanishing.
+  siteCategories  Int[]
+  // Longest vehicle any site here takes, 0 when none do. NOT a site type — a
+  // plain tent-image campsite routinely accepts a 35ft RV — so this is for a
+  // future "will my trailer fit" filter, never for the type icons.
+  maxVehicleLength Int           @default(0)
   watches         WatchFacility[]
   slots           AvailabilitySlot[]
   events          AvailabilityEvent[]

@@ -10,6 +10,7 @@ import {
 } from "@campingmeow/scanner";
 import type { FacilityStatus } from "@campingmeow/database";
 import { ValidationError } from "~/lib/errors";
+import { toSiteTypes, type SiteType } from "~/lib/site-types";
 import { HORIZON_DAYS, MAX_SEARCH_FACILITIES } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import {
@@ -47,6 +48,7 @@ export interface FacilitySearchResult {
   facilityId: string;
   facilityName: string;
   parkName: string;
+  siteTypes: SiteType[];
   /** Null when we have never scanned this campground. */
   lastScannedAt: string | null;
   openings: OpeningResult[];
@@ -191,6 +193,7 @@ export interface CalendarAvailability {
   facilityId: string;
   facilityName: string;
   parkName: string;
+  siteTypes: SiteType[];
   /** ReserveCalifornia's own ids, for deep-linking past our 63-day window. */
   rcPlaceId: number;
   rcFacilityId: number;
@@ -221,6 +224,7 @@ async function getFacilityCalendar(facilityId: string): Promise<CalendarAvailabi
     facilityId: facility.id,
     facilityName: facility.name,
     parkName: facility.park.name,
+    siteTypes: toSiteTypes(facility.siteCategories),
     rcPlaceId: facility.park.rcPlaceId,
     rcFacilityId: facility.rcFacilityId,
     freeDates: [...new Set(slots.map((slot) => fmt(slot.date)))].sort(),
@@ -308,6 +312,7 @@ async function buildResults(query: SearchQuery, facilities: FacilityWithPark[]):
       facilityId: facility.id,
       facilityName: facility.name,
       parkName: facility.park.name,
+      siteTypes: toSiteTypes(facility.siteCategories),
       lastScannedAt: facility.lastScannedAt ? facility.lastScannedAt.toISOString() : null,
       openings,
     });
@@ -421,7 +426,10 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
       : availability.totalUnits > 0
         ? "first_come_first_served"
         : "no_inventory";
-  await facilityRepository.setStatus(facility.id, status, availability.sites.length);
+  await facilityRepository.setStatus(facility.id, status, availability.sites.length, {
+    siteCategories: availability.categories,
+    maxVehicleLength: availability.maxVehicleLength,
+  });
 
   const summary: ScanSummary = {
     facilityId: facility.id,

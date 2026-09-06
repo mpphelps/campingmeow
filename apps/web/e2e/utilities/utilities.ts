@@ -59,6 +59,8 @@ export type CreateFacilityOverrides = {
   lastScannedAt?: Date | null;
   /** Only `bookable` campgrounds are scanned or offered in the watch picker. */
   status?: "bookable" | "no_inventory" | "first_come_first_served";
+  /** Raw RC UnitCategoryIds: 1 campsite, 2 group, 7 day use, 1008 cabin, 1014 primitive, 1015 RV, 1016 horse. */
+  siteCategories?: number[];
 };
 
 let facilitySeedCounter = 0;
@@ -75,6 +77,7 @@ export async function createFacility(overrides: CreateFacilityOverrides) {
       parkId: overrides.parkId,
       lastScannedAt: overrides.lastScannedAt ?? null,
       status: overrides.status ?? "bookable",
+      siteCategories: overrides.siteCategories ?? [],
     },
   });
 }

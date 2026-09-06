@@ -24,8 +24,13 @@ export const facilityRepository = {
   },
 
   /** Recorded after every scan, so status is a by-product of work we already do. */
-  async setStatus(id: string, status: FacilityStatus, bookableSites: number) {
-    return prisma.facility.update({ where: { id }, data: { status, bookableSites } });
+  async setStatus(
+    id: string,
+    status: FacilityStatus,
+    bookableSites: number,
+    siteInfo: { siteCategories: number[]; maxVehicleLength: number },
+  ) {
+    return prisma.facility.update({ where: { id }, data: { status, bookableSites, ...siteInfo } });
   },
 
   /** Non-bookable campgrounds, for the admin re-check. */

@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { Button } from "@campingmeow/ui/components/button";
+import { SiteTypeIcons } from "~/components/site-type-icons";
 import { List, ListItem } from "@campingmeow/ui/components/list";
 import type { Route } from "./+types/parks.$parkId";
 import { catalogService } from "~/services/catalog.service.server";
@@ -31,9 +32,12 @@ export default function ParkDetail({ loaderData }: Route.ComponentProps) {
         <List className="mt-3">
           {park.facilities.map((facility) => (
             <ListItem key={facility.id} className="flex items-center justify-between gap-3 text-sm">
-              <Link to={`/parks/${park.id}/${facility.id}`} className="min-w-0 font-medium hover:underline">
-                {facility.name}
-              </Link>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Link to={`/parks/${park.id}/${facility.id}`} className="min-w-0 font-medium hover:underline">
+                  {facility.name}
+                </Link>
+                <SiteTypeIcons types={facility.siteTypes} />
+              </span>
               <div className="flex shrink-0 gap-2">
                 <Button variant="outline" size="sm" asChild>
                   <Link to={`/parks/${park.id}/${facility.id}`}>Availability</Link>

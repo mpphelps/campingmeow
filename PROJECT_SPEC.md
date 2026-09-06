@@ -78,8 +78,8 @@ and a date pattern; we watch, and email them when a match opens.
 - **User** — Auth0 sync (email, name). Roles come from the JWT, not a column.
 - **Park** — RC place id, name, city, lat/long, active flag.
 - **Facility** — RC facility id, name, parent park, active flag,
-  `lastScannedAt`, `bookableSites`, and `status`. No lat/long: RC only has
-  park-level coordinates.
+  `lastScannedAt`, `bookableSites`, `status`, `siteCategories` and
+  `maxVehicleLength`. No lat/long: RC only has park-level coordinates.
 
   | `status` | Meaning | Measured |
   |---|---|---|
@@ -91,6 +91,26 @@ and a date pattern; we watch, and email them when a match opens.
   picker**, with the reason shown — a watch on them could never fire, because
   nothing is reservable, so there is no cancellation to catch. Hiding them
   outright would leave someone wondering where a campground went.
+
+  `siteCategories` is the set of RC `UnitCategoryId`s the last scan saw, and
+  drives the type icons shown next to a campground everywhere it appears.
+  Measured across 60 campgrounds: seven ids, and 83% of campgrounds use exactly
+  one — but mixed ones are real ("Paso Picacho Campground & Cabins" reports both
+  `1` and `1008`), so it is a set, not a single value.
+
+  | Id | Type | Id | Type |
+  |---|---|---|---|
+  | `1` | campsite | `1014` | hike-in / boat-in |
+  | `2` | group camp | `1015` | RV hookup |
+  | `7` | day use | `1016` | horse camp |
+  | `1008` | cabin | | |
+
+  Raw RC ids are stored and mapped to labels in `app/lib/site-types.ts`, so a
+  category RC invents later shows up as an unknown id and is dropped from
+  display rather than mislabelled. `maxVehicleLength` is stored alongside but is
+  **not** a site type — a plain tent-image campsite routinely reports 35ft,
+  because most drive-in sites fit an RV. It answers "will my trailer fit",
+  which is a future filter, not an icon.
 - **Watch** — user, check-in weekdays, nights, active flag.
 - **WatchFacility** — join table: the campgrounds one watch covers.
 - **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated

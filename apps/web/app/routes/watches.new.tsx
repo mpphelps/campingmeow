@@ -7,6 +7,7 @@ import { Checkbox } from "@campingmeow/ui/components/checkbox";
 import { Input } from "@campingmeow/ui/components/input";
 import { Label } from "@campingmeow/ui/components/label";
 import type { Route } from "./+types/watches.new";
+import { SiteTypeIcons } from "~/components/site-type-icons";
 import { ValidationError } from "~/lib/errors";
 import { withAuth } from "~/lib/with-auth";
 import type { AuthUser } from "~/services/auth.service.server";
@@ -108,6 +109,7 @@ function FacilityPicker({
               <Label htmlFor={`pick-${facility.id}`} className={facility.watchable ? undefined : "opacity-60"}>
                 <span className="text-muted-foreground">{facility.parkName} · </span>
                 {facility.name}
+                <SiteTypeIcons types={facility.siteTypes} className="ml-1.5 align-text-bottom" />
                 {/* Shown rather than hidden: "first-come, first-served" is
                     genuinely useful to know about a place you might otherwise
                     drive to expecting a reservation. */}
