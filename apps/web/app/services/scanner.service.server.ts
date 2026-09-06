@@ -57,9 +57,12 @@ export interface ScannerStatus {
   lastCycleFailed: number;
   /** How the catalog breaks down; only `bookable` is ever scanned. */
   byStatus: Record<string, number>;
+  /** Paused by an admin. The loop finishes its campground, then waits. */
+  paused: boolean;
 }
 
 let started = false;
+let paused = false;
 let current: string | null = null;
 let currentPark: string | null = null;
 let progress = 0;
@@ -73,6 +76,7 @@ let lastCycleFailed = 0;
 export const scannerService = {
   start,
   getStatus,
+  setPaused,
 };
 
 function start(): void {
@@ -82,13 +86,41 @@ function start(): void {
     return;
   }
   started = true;
+  installCrashLogging();
   logger.info({ action: "scanner.start", horizonDays: HORIZON_DAYS }, "scanner started");
   void loop();
+}
+
+/**
+ * Say something on the way down.
+ *
+ * Node exits on an unhandled rejection, and a server that vanishes mid-sweep
+ * leaves a 502 and no explanation — which is exactly what happened. These
+ * handlers do not prevent the exit; they make the next one diagnosable.
+ */
+let crashLoggingInstalled = false;
+function installCrashLogging(): void {
+  if (crashLoggingInstalled) return;
+  crashLoggingInstalled = true;
+
+  process.on("unhandledRejection", (reason) => {
+    logger.error(
+      { action: "process.unhandled_rejection", reason, current, currentPark, progress, progressTotal },
+      "unhandled promise rejection",
+    );
+  });
+  process.on("uncaughtException", (err) => {
+    logger.error(
+      { action: "process.uncaught_exception", err, current, currentPark, progress, progressTotal },
+      "uncaught exception",
+    );
+  });
 }
 
 async function getStatus(): Promise<ScannerStatus> {
   return {
     running: started,
+    paused,
     current,
     currentPark,
     progress,
@@ -102,12 +134,27 @@ async function getStatus(): Promise<ScannerStatus> {
   };
 }
 
+/**
+ * Stop or restart sweeping, without restarting the process.
+ *
+ * The scanner is the only thing here that talks to ReserveCalifornia and the
+ * heaviest thing the box does, so when something is wrong this is the lever
+ * that separates "the app is broken" from "the app is fine, the sweep isn't".
+ * Pausing takes effect at the next campground rather than abandoning one
+ * mid-write.
+ */
+function setPaused(next: boolean): void {
+  if (paused === next) return;
+  paused = next;
+  logger.info({ action: next ? "scanner.paused" : "scanner.resumed" }, next ? "scanner paused" : "scanner resumed");
+}
+
 async function loop(): Promise<void> {
   // Runs for the life of the process. A pass is wrapped whole so one bad
   // campground can never stop the scanner.
   for (;;) {
     try {
-      await runCycle();
+      if (!paused) await runCycle();
     } catch (err) {
       logger.error({ action: "scanner.cycle_failed", err }, "scan cycle failed");
     }
@@ -128,6 +175,12 @@ async function runCycle(): Promise<void> {
   progressTotal = facilities.length;
 
   for (const facility of facilities) {
+    // Checked per campground rather than per cycle: a sweep takes half an hour,
+    // and "pause" that waits half an hour is not a pause.
+    if (paused) {
+      logger.info({ action: "scanner.pause_break", progress, progressTotal }, "paused mid-cycle");
+      break;
+    }
     current = facility.name;
     currentPark = facility.park.name;
     try {
@@ -147,6 +200,15 @@ async function runCycle(): Promise<void> {
 
   cycleNumber++;
   lastCycleScanned = scanned;
+  const heap = process.memoryUsage();
+  logger.info(
+    {
+      action: "scanner.memory",
+      heapUsedMb: Math.round(heap.heapUsed / 1024 / 1024),
+      rssMb: Math.round(heap.rss / 1024 / 1024),
+    },
+    "memory after cycle",
+  );
   lastCycleFailed = failed;
   lastCycleDurationMs = Date.now() - startedAt;
   logger.info(

@@ -58,6 +58,12 @@ test.describe("admin dashboard", () => {
     // even with nothing running — as "—" rather than a misleading 0%.
     const thisCycle = page.locator("dt", { hasText: /^This cycle$/ }).locator("xpath=following-sibling::dd[1]");
     await expect(thisCycle).toHaveText("—");
+
+    // The pause control exists but is disabled while the scanner is stopped —
+    // there is nothing to pause, and an enabled button would imply otherwise.
+    const pauseButton = page.getByRole("button", { name: "Pause scanning" });
+    await expect(pauseButton).toBeVisible();
+    await expect(pauseButton).toBeDisabled();
     await expect(page.getByText("1 bookable · 0 no inventory · 0 first-come")).toBeVisible();
     await expect(page.getByText("Runs after each scan cycle")).toBeVisible();
 
@@ -115,3 +121,26 @@ test.describe("catalog sync endpoint — non-admin", () => {
 });
 
 
+
+/**
+ * Pausing is the lever that separates "the app is broken" from "the app is
+ * fine, the sweep isn't" — so it must be admin-only, like everything else that
+ * changes what the server does.
+ */
+test.describe("scanner pause — authorization", () => {
+  test.use({ user: null });
+
+  test("refuses an anonymous caller", async ({ page }) => {
+    const response = await page.request.post("/api/scanner-pause", { form: { paused: "true" } });
+    expect(response.status()).toBe(401);
+  });
+});
+
+test.describe("scanner pause — non-admin", () => {
+  test.use({ user: { email: "nopause@example.com", firstName: "No", lastName: "Pause" } });
+
+  test("refuses a signed-in user without the permission", async ({ page }) => {
+    const response = await page.request.post("/api/scanner-pause", { form: { paused: "true" } });
+    expect(response.status()).toBe(403);
+  });
+});

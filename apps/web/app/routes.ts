@@ -23,4 +23,5 @@ export default [
   route("api/catalog-sync", "routes/api.catalog-sync.ts"),
   route("api/geocode", "routes/api.geocode.ts"),
   route("api/recheck-facilities", "routes/api.recheck-facilities.ts"),
+  route("api/scanner-pause", "routes/api.scanner-pause.ts"),
 ] satisfies RouteConfig;

@@ -11,6 +11,16 @@ services:
       - "3001:3000"
     env_file:
       - packages/database/.env
+    environment:
+      # Keep the heap well inside the box. Without a ceiling Node grows until
+      # the machine is out of memory and the kernel picks a victim; with one it
+      # collects, and if it genuinely cannot it dies loudly with a heap error
+      # instead of silently.
+      NODE_OPTIONS: --max-old-space-size=1024
+    # A container limit is what makes Docker report OOMKilled=true. Without it
+    # the kernel kills the process and Docker reports nothing useful.
+    mem_limit: 2g
+    memswap_limit: 2g
     depends_on:
       db:
         condition: service_healthy

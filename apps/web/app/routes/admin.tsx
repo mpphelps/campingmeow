@@ -31,6 +31,7 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
   const syncing = sync.state !== "idle";
   const scanner = dashboard.scanner;
   const recheck = useFetcher<{ checked: number; nowBookable: string[] }>();
+  const pause = useFetcher<{ paused: boolean }>();
   const notifier = dashboard.notifier;
 
   // The scanner never stops, so keep the numbers moving while this page is open.
@@ -111,7 +112,13 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               <div>
                 <dt className="text-muted-foreground">Status</dt>
                 <dd className="font-medium">
-                  {!scanner.running ? "Stopped" : scanner.current ? "Scanning" : "Between cycles"}
+                  {!scanner.running
+                    ? "Stopped"
+                    : scanner.paused
+                      ? "Paused"
+                      : scanner.current
+                        ? "Scanning"
+                        : "Between cycles"}
                 </dd>
                 {scanner.current && (
                   // Campground names repeat across the state ("Group Camp",
@@ -164,6 +171,18 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
               A cycle that keeps growing means we are falling behind — every campground is scanned every pass, so the duration is
               the whole story.
             </p>
+
+            <pause.Form method="post" action="/api/scanner-pause" className="mt-3">
+              <input type="hidden" name="paused" value={String(!scanner.paused)} />
+              <Button type="submit" variant="outline" size="sm" disabled={pause.state !== "idle" || !scanner.running}>
+                {scanner.paused ? "Resume scanning" : "Pause scanning"}
+              </Button>
+              {scanner.paused && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  Sweeping is stopped. Stored availability is still served, and goes stale until you resume.
+                </span>
+              )}
+            </pause.Form>
 
             <recheck.Form method="post" action="/api/recheck-facilities" className="mt-3">
               <Button type="submit" variant="outline" size="sm" disabled={recheck.state !== "idle"}>
