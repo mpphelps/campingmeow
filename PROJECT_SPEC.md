@@ -304,11 +304,12 @@ a 429 mid-batch. If Resend returns `daily_quota_exceeded` anyway — it can see
 mail we did not send, from the dashboard or another app on the key — that answer
 outranks our tally and stops the pass.
 
-Openings found while paused are **held, not dropped**. Budget returns on its own
-as the oldest batch ages out, and held events go out on a later pass. The home
-page says alerts are paused and roughly when they resume, because otherwise
-silence looks exactly like "nothing has opened" — and the whole promise of the
-product is that silence means nothing has opened.
+Openings found while paused are still recorded and visible in the app, but they
+are not queued for mail. Budget returns on its own as the oldest batch ages out
+of the window, and the sweep running at that point finds whatever is open then.
+The home page says alerts are paused and roughly when they resume, because
+otherwise silence looks exactly like "nothing has opened" — and the whole
+promise of the product is that silence means nothing has opened.
 
 ## 6. Out of scope (for now)
 

@@ -151,10 +151,27 @@ export const availabilityRepository = {
   async listUnnotifiedOpenings(limit: number) {
     return prisma.availabilityEvent.findMany({
       where: { type: "opened", notifiedAt: null },
-      orderBy: { detectedAt: "asc" },
+      orderBy: { detectedAt: "desc" },
       take: limit,
       select: { id: true, facilityId: true, unitId: true, unitName: true, date: true },
     });
+  },
+
+  /**
+   * Stamp every opening still waiting, sent or not.
+   *
+   * Run at the end of a notifier pass so the next one starts clean. An opening
+   * we could not mail — a send that failed, a batch over the limit, a paused
+   * quota — is not worth carrying: a sweep takes about 35 minutes, so by the
+   * next pass the site has very likely gone, and mailing a booked site is
+   * worse than saying nothing. The next sweep will find whatever is open then.
+   */
+  async markAllOpeningsNotified() {
+    const { count } = await prisma.availabilityEvent.updateMany({
+      where: { type: "opened", notifiedAt: null },
+      data: { notifiedAt: new Date() },
+    });
+    return count;
   },
 
   /**

@@ -23,6 +23,7 @@ import { preferenceService } from "./preference.service.server";
 
 /** Most events to process in one pass, so a backlog can't email the world at once. */
 const BATCH_LIMIT = 500;
+
 /** Longest stay a watch can ask for; bounds how far around an opening we look. */
 const MAX_NIGHTS = 7;
 
@@ -73,6 +74,8 @@ async function getStatus(): Promise<NotifierStatus> {
   // Counted in Postgres rather than by fetching rows and measuring the array:
   // this runs on every admin poll, and the count is all it displays.
   const [pendingEvents, quota] = await Promise.all([
+    // Openings found since the last notifier pass. Every pass clears the rest,
+    // so this is current work rather than an ever-growing backlog.
     availabilityRepository.countUnnotifiedOpenings(),
     getQuotaStatus(),
   ]);
@@ -111,91 +114,70 @@ async function runOnce(): Promise<{ events: number; emails: number }> {
 
   const facilityIds = [...new Set(events.map((e) => e.facilityId))];
   const watches = await watchRepository.listActiveByFacilityIds(facilityIds);
-  if (watches.length === 0) {
-    // Nobody is watching these campgrounds — still mark them handled, or the
-    // notifier re-examines the same events every ten minutes forever.
-    await availabilityRepository.markNotified(events.map((e) => e.id));
-    return { events: events.length, emails: 0 };
-  }
 
-  const freeNights = await loadFreeNights(events);
-  const matches = findMatches(events, watches, freeNights);
-
-  const byUser = new Map<string, Match[]>();
-  for (const match of matches) {
-    const list = byUser.get(match.userId) ?? [];
-    list.push(match);
-    byUser.set(match.userId, list);
-  }
-
-  // Which events each user was told about — the EmailLog metadata.
-  const notifiedByUser: Record<string, string[]> = {};
-  // Events whose mail did not go out. These stay unnotified so the next pass
-  // retries them, which is the whole point of the outbox.
-  const deferred = new Set<string>();
-  const defer = (userMatches: Match[]) => userMatches.forEach((m) => deferred.add(m.eventId));
-
-  let budget = (await getQuotaStatus()).remaining;
   let sent = 0;
-  let skippedForQuota = 0;
+  const notifiedByUser: Record<string, string[]> = {};
 
-  for (const [userId, userMatches] of byUser) {
-    const email = userMatches[0]!.email;
+  if (watches.length > 0) {
+    const freeNights = await loadFreeNights(events);
+    const matches = findMatches(events, watches, freeNights);
 
-    if (budget <= 0) {
-      // Out of allowance. Hold the openings rather than dropping them: the
-      // window is rolling, so budget returns without anyone doing anything.
-      defer(userMatches);
-      skippedForQuota++;
-      continue;
+    const byUser = new Map<string, Match[]>();
+    for (const match of matches) {
+      const list = byUser.get(match.userId) ?? [];
+      list.push(match);
+      byUser.set(match.userId, list);
     }
 
-    try {
-      // Watches keep running when email is off — the user just isn't told, and
-      // can still see openings in-app. So this skips the send, not the scan.
-      const prefs = await preferenceService.getForUser(userId);
-      if (!prefs.emailNotifications) {
-        logger.info({ action: "notifier.skipped_opted_out", userId }, "user has email notifications off");
+    let budget = (await getQuotaStatus()).remaining;
+
+    for (const [userId, userMatches] of byUser) {
+      const email = userMatches[0]!.email;
+
+      // Out of allowance. Nothing is queued for later: by the next pass these
+      // sites have most likely gone, and that pass will find what is open then.
+      if (budget <= 0) {
+        logger.info({ action: "notifier.skipped_quota", userId }, "no send allowance left this window");
         continue;
       }
 
-      const token = await preferenceService.getUnsubscribeToken(userId);
-      await emailSender.send(buildEmail(userMatches, token));
-      sent++;
-      budget--;
-      notifiedByUser[userId] = [...new Set(userMatches.map((m) => m.eventId))];
-      logger.info({ action: "notifier.sent", userId, openings: userMatches.length }, "opening email sent");
-    } catch (err) {
-      defer(userMatches);
-      if (err instanceof EmailQuotaExceededError) {
-        // Resend's own count says we are done, and it outranks ours — it can
-        // see mail we didn't send. Stop the pass; everyone left is deferred.
-        budget = 0;
-        skippedForQuota++;
-        logger.warn({ action: "notifier.quota_exhausted", userId, err }, "Resend daily quota exhausted; pausing sends");
-        continue;
+      try {
+        // Watches keep running when email is off — the user just isn't told,
+        // and can still see openings in-app. So this skips the send, not the
+        // scan.
+        const prefs = await preferenceService.getForUser(userId);
+        if (!prefs.emailNotifications) {
+          logger.info({ action: "notifier.skipped_opted_out", userId }, "user has email notifications off");
+          continue;
+        }
+
+        const token = await preferenceService.getUnsubscribeToken(userId);
+        await emailSender.send(buildEmail(userMatches, token));
+        sent++;
+        budget--;
+        notifiedByUser[userId] = [...new Set(userMatches.map((m) => m.eventId))];
+        logger.info({ action: "notifier.sent", userId, openings: userMatches.length }, "opening email sent");
+      } catch (err) {
+        if (err instanceof EmailQuotaExceededError) {
+          // Resend's own count outranks ours — it can see mail we did not send.
+          budget = 0;
+          logger.warn({ action: "notifier.quota_exhausted", userId, err }, "Resend daily quota exhausted");
+          continue;
+        }
+        logger.warn({ action: "notifier.send_failed", userId, email, err }, "opening email failed to send");
       }
-      logger.warn({ action: "notifier.send_failed", userId, email, err }, "opening email failed to send");
     }
   }
 
-  // Everything except the held-back openings. An event matched by two users,
-  // one of whom we could not reach, is held for both — so that user may get a
-  // second copy next pass. A duplicate is a far smaller failure than never
-  // being told a site opened, which is the one thing this product promises.
-  const handled = events.filter((e) => !deferred.has(e.id)).map((e) => e.id);
-  if (handled.length > 0) await availabilityRepository.markNotified(handled);
+  // Everything still waiting is stamped, sent or not, so the next pass starts
+  // clean. Carrying an opening forward is not worth it: a sweep takes about 35
+  // minutes, so by then the site has very likely gone, and mailing a booked
+  // site is worse than saying nothing. The next sweep finds what is open then.
+  const handled = await availabilityRepository.markAllOpeningsNotified();
   if (sent > 0) await emailLogRepository.record(sent, notifiedByUser);
 
   logger.info(
-    {
-      action: "notifier.pass",
-      events: events.length,
-      matched: matches.length,
-      emails: sent,
-      deferred: deferred.size,
-      skippedForQuota,
-    },
+    { action: "notifier.pass", events: events.length, emails: sent, handled },
     "notifier pass complete",
   );
   return { events: events.length, emails: sent };
@@ -277,7 +259,8 @@ function stayIsFree(freeNights: Set<string>, facilityId: string, unitId: number,
 
 function buildEmail(matches: Match[], unsubscribeToken: string) {
   const manageUrl = `${SITE_URL}/preferences?token=${encodeURIComponent(unsubscribeToken)}`;
-  const lines = matches
+  // Soonest first: the nearest date is the one someone can act on.
+  const lines = [...matches]
     .sort((a, b) => a.checkin.localeCompare(b.checkin))
     .map(
       (m) =>

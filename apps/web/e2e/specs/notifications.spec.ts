@@ -176,7 +176,7 @@ test.describe("daily email cap", () => {
     });
   }
 
-  test("holds openings unsent once the allowance is gone, and retries them later", async () => {
+  test("sends nothing once the allowance is gone, and does not queue it for later", async () => {
     const fri = nextWeekday(5);
     const { facility } = await setup({ checkinDays: [5], nights: 1 });
     await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
@@ -188,21 +188,19 @@ test.describe("daily email cap", () => {
     expect(result.emails).toBe(0);
     expect(stubSender.sent).toHaveLength(0);
 
-    // The outbox property: held, not dropped. Marking it notified here would
-    // lose the opening forever.
-    const held = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
-    expect(held.notifiedAt).toBeNull();
+    // Stamped anyway. Carrying it forward would mail a site that has very
+    // likely gone by the next sweep; that sweep finds what is open then.
+    const handled = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(handled.notifiedAt).not.toBeNull();
 
-    // Age those sends out of the trailing window; the same event now goes out.
+    // Freeing the allowance does not resurrect it — there is nothing queued.
     await prisma.emailLog.update({
       where: { id: spent.id },
       data: { sentAt: new Date(Date.now() - EMAIL_QUOTA_WINDOW_MS - 60_000) },
     });
 
-    expect((await notificationService.runOnce()).emails).toBe(1);
-    expect(stubSender.sent).toHaveLength(1);
-    const after = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
-    expect(after.notifiedAt).not.toBeNull();
+    expect((await notificationService.runOnce()).emails).toBe(0);
+    expect(stubSender.sent).toHaveLength(0);
   });
 
   test("counts over a rolling 24 hours, not since midnight", async () => {
@@ -228,6 +226,6 @@ test.describe("daily email cap", () => {
 
     await page.goto("/");
     await expect(page.getByText("Email alerts are paused")).toBeVisible();
-    await expect(page.getByText("Openings are still being tracked and held", { exact: false })).toBeVisible();
+    await expect(page.getByText("Your watches keep running", { exact: false })).toBeVisible();
   });
 });
