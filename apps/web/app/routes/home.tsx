@@ -286,9 +286,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       {quota.paused && (
         <Alert variant="warning" className="mb-4">
           <AlertTitle>Email alerts are paused</AlertTitle>
-          We&apos;ve hit today&apos;s free-tier email limit, so we&apos;re not sending right now. Openings are still being
-          tracked and held — you&apos;ll get them once sending resumes
-          {quota.resumesAt ? ` (about ${resumesIn(quota.resumesAt)})` : ""}. Nothing is lost, and your watches keep running.
+          We&apos;ve hit today&apos;s free-tier email limit, so we&apos;re not sending right now. Your watches keep
+          running and openings are still tracked — check them in the app. Email resumes
+          {quota.resumesAt ? ` about ${resumesIn(quota.resumesAt)}` : " shortly"}.
         </Alert>
       )}
 

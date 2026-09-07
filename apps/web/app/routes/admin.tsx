@@ -233,9 +233,10 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
             {notifier.quota.paused && (
               <Alert variant="warning" className="mt-3">
                 <AlertTitle>Notifications paused — daily email limit reached</AlertTitle>
-                Openings are still being found and stored; they are held unsent and go out when the allowance returns
-                {notifier.quota.resumesAt ? ` (around ${new Date(notifier.quota.resumesAt).toLocaleString()})` : ""}. Raising
-                the Resend plan lifts the cap.
+                Openings are still found and stored, but nothing is mailed until the allowance returns
+                {notifier.quota.resumesAt ? ` (around ${new Date(notifier.quota.resumesAt).toLocaleString()})` : ""}. They are
+                not queued — by then those sites have likely gone, and the next sweep finds what is open then. Raising the
+                Resend plan lifts the cap.
               </Alert>
             )}
 
