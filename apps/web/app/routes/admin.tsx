@@ -162,6 +162,23 @@ export default function Admin({ loaderData }: Route.ComponentProps) {
                 </dd>
               </div>
               <div>
+                <dt className="text-muted-foreground">Last completed</dt>
+                <dd className="font-medium">
+                  {scanner.lastCycleCompletedAt ? (
+                    <>
+                      {timeAgo(scanner.lastCycleCompletedAt)}
+                      <span className="ml-2 font-normal text-muted-foreground">
+                        {new Date(scanner.lastCycleCompletedAt).toLocaleTimeString()}
+                      </span>
+                    </>
+                  ) : (
+                    // Not "never" — the process may simply have restarted; this
+                    // is held in memory, not stored.
+                    "no full pass since restart"
+                  )}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-muted-foreground">Cycles completed</dt>
                 <dd className="font-medium tabular-nums">{scanner.cycleNumber}</dd>
               </div>

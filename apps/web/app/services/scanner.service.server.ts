@@ -70,6 +70,12 @@ export interface ScannerStatus {
   /** Completed passes since start. */
   cycleNumber: number;
   lastCycleStartedAt: string | null;
+  /**
+   * When a full pass last finished. Null until one does — which, while the
+   * process was crashing mid-sweep, was the honest answer and the thing the
+   * panel could not say.
+   */
+  lastCycleCompletedAt: string | null;
   /** How long the last full pass took — the number that says if we keep up. */
   lastCycleDurationMs: number | null;
   lastCycleScanned: number;
@@ -90,6 +96,7 @@ let progress = 0;
 let progressTotal = 0;
 let cycleNumber = 0;
 let lastCycleStartedAt: number | null = null;
+let lastCycleCompletedAt: number | null = null;
 let lastCycleDurationMs: number | null = null;
 let lastCycleScanned = 0;
 let lastCycleFailed = 0;
@@ -148,6 +155,7 @@ async function getStatus(): Promise<ScannerStatus> {
     progressTotal,
     cycleNumber,
     lastCycleStartedAt: lastCycleStartedAt ? new Date(lastCycleStartedAt).toISOString() : null,
+    lastCycleCompletedAt: lastCycleCompletedAt ? new Date(lastCycleCompletedAt).toISOString() : null,
     lastCycleDurationMs,
     lastCycleScanned,
     lastCycleFailed,
@@ -248,7 +256,8 @@ async function runCycle(): Promise<void> {
   cycleNumber++;
   lastCycleScanned = scanned;
   lastCycleFailed = failed;
-  lastCycleDurationMs = Date.now() - startedAt;
+  lastCycleCompletedAt = Date.now();
+  lastCycleDurationMs = lastCycleCompletedAt - startedAt;
   cycleStartedAt = null;
 
   const heap = process.memoryUsage();
