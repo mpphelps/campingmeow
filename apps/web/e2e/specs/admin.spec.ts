@@ -61,6 +61,10 @@ test.describe("admin dashboard", () => {
 
     // The pause control exists but is disabled while the scanner is stopped —
     // there is nothing to pause, and an enabled button would imply otherwise.
+    // Held in memory, so a restart resets it — "never" would be a lie.
+    const lastCompleted = page.locator("dt", { hasText: /^Last completed$/ }).locator("xpath=following-sibling::dd[1]");
+    await expect(lastCompleted).toHaveText("no full pass since restart");
+
     const pauseButton = page.getByRole("button", { name: "Pause scanning" });
     await expect(pauseButton).toBeVisible();
     await expect(pauseButton).toBeDisabled();
