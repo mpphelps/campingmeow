@@ -46,8 +46,10 @@ and a date pattern; we watch, and email them when a match opens.
    hidden, with a count, so the page is openings rather than a wall of grey.
 8. **Notifications.** Email only, via **Resend**, behind a small sender
    interface — tests use a logging stub, and swapping to Brevo or SES is one
-   adapter. Sent when a night flips unavailable → available and completes a stay
-   a watch wants. See §5.
+   adapter. Sent when a night flips unavailable → available, a second read
+   confirms it, and it completes a stay a watch wants. The first opening for a
+   person is emailed the moment it is found rather than at the end of the
+   sweep; the rest are batched. See §5.
 9. **Politeness.** One request per **second**, matching camply
    (`juftin/camply`), which has run against this API for years at that rate.
    Enforced by a **global rate gate** in `packages/scanner` that every request
@@ -182,6 +184,23 @@ An admin can pause the sweep from the panel. It is checked between campgrounds
 rather than between cycles, because a pause that waits half an hour is not a
 pause.
 
+### An opening is only believed when a second read agrees
+
+RC's grid is not deterministic: about one response in eight reports a block of
+booked sites as free (measured 2026-09-19, `packages/scanner/API.md` §4c). One
+bad response at Crystal Cove produced ~100 phantom openings and four emails a
+day to a real user.
+
+So a scan that finds an opening re-reads the facility, and a night counts as
+free only if **both reads agree**. The failure only ever invents availability,
+so the intersection is right whichever response was bad. Rejected nights are
+stored as booked, which also kills the phantom `closed` events that followed
+one pass later.
+
+Skipped when a scan finds nothing new, so it costs three extra requests only
+when there is something to announce. Each scan reports a `rejected` count — our
+measure of how often the API lies.
+
 ### Writing only what changed
 
 A scan produces the campground's whole window, but between two passes 25
@@ -256,15 +275,20 @@ non-bookable campgrounds on demand.
 
 ## 5. Notifications
 
-The notifier runs **once at the end of each scan pass**, never on a loop of its
-own: a pass is exactly the unit of work that produces events, so there is
-nothing to poll for, and one run per pass batches a user's openings into a
-single email instead of one per campground. If ReserveCalifornia blocks us, the
-sweep stops and mail stops with it — deliberately.
+The notifier has no loop of its own. The sweep drives it twice: **the moment a
+scan finds a confirmed opening**, and **once at the end of the pass** for
+whatever that missed. A pass takes ~24 minutes, so waiting for the end would
+announce an early opening twenty minutes late.
 
-It claims `opened` events with `notifiedAt IS NULL`, matches them to watches,
-groups by user, sends one email each, then stamps the events and writes an
-EmailLog row.
+Only a person's **first** opening is sent immediately; anything else that opens
+for them in the same sweep is batched at the end. So nobody gets an email per
+campground, and a person gets **at most two per sweep** — one campground
+watched means exactly one, immediately. That bound keeps the daily cap
+predictable.
+
+Either path claims `opened` events with `notifiedAt IS NULL`, matches them to
+watches, groups by user, sends one email each, then stamps and writes an
+EmailLog row. If RC blocks us, the sweep stops and mail stops with it.
 
 - **An event is one night; a watch wants a stay.** A night opening can complete
   a multi-night stay whose other nights were already free, so matching walks the
@@ -273,11 +297,14 @@ EmailLog row.
 - **No re-send while it stays open** — that falls out of events firing only on
   transitions, so only within-batch dedup on (watch, unit, check-in) is needed.
   Close and reopen is a new event and a new email.
-- **Only events whose mail went out are stamped.** A failed send, or one held by
-  the daily cap, stays unnotified for the next pass. An event matched by two
-  users, one unreachable, is held for both — so that user may get a second copy
-  later. A duplicate is a far smaller failure than never being told a site
-  opened, which is the one thing the product promises.
+- **Nothing is emailed until a second read confirms it.** See §4; the API
+  reports booked sites as free often enough that a single observation is not
+  evidence. Events only exist for confirmed openings, so a phantom can never
+  reach an inbox.
+- **An immediate send stamps only what it sent.** The rest — unwatched, capped,
+  or failed — fall to the end-of-pass run, which stamps **everything still
+  waiting, sent or not**, so the next pass starts clean. By then the site has
+  very likely gone, and mailing a booked site is worse than saying nothing.
 - **Email is a channel, not the subscription.** Turning it off leaves the watch
   running and the openings visible in-app; the notifier just skips that user.
   Deactivating a watch is a separate action on `/watches`.
@@ -360,7 +387,8 @@ Supporting rules:
 
 Built and deployed: catalog sync, browse, location search, watches, the scanner
 sweep, availability events, search, the nearby availability grid, site-type
-icons, notification email with one-click unsubscribe, the daily email cap,
+icons, notification email with one-click unsubscribe and immediate send on the
+first opening, second-read confirmation of openings, the daily email cap,
 preferences, admin panel with user bans and sweep pause, RBAC.
 
 Not built:

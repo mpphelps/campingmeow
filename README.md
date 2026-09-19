@@ -107,10 +107,17 @@ Full setup, troubleshooting, and disaster-recovery runbooks live in **[`DEPLOYME
 
 ## Data model
 
-- **User** — id, email (unique), firstName, lastName, timestamps. Created on first Auth0 login.
+- **User** — id, email (unique), firstName, lastName, timestamps. Created on first Auth0 login. `bannedAt` suspends an account without deleting anything.
 - **Park** / **Facility** — the ReserveCalifornia catalog, mirrored daily; RC ids kept as unique columns, disappeared records marked inactive.
+- **Watch** / **WatchFacility** — the campgrounds and date pattern a user cares about. No date bounds: a watch covers the rolling 63-day window.
+- **AvailabilitySlot** — one row per (campground, site, night), rewritten only where it changed.
+- **AvailabilityEvent** — the append-only log of nights opening and closing; `notifiedAt` makes it the email outbox.
 
-Campground watches + notification service come next (extra Docker containers for the scanner worker and notifier). See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md).
+The scanner and notifier run **inside the web app's process**, not separate containers: the rate limiter is per-process state, so a second container would double our request rate.
+
+Two behaviours worth knowing: an opening is **confirmed by a second read** before anyone is emailed (the grid reports booked sites as free ~1 in 8 responses), and a person's **first opening is emailed immediately** rather than at the end of the ~24-minute sweep, with the rest batched.
+
+See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) for the design and [`packages/scanner/API.md`](./packages/scanner/API.md) for API notes.
 
 ## License
 

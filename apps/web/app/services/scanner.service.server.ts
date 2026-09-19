@@ -219,6 +219,7 @@ async function runCycle(): Promise<void> {
 
   let scanned = 0;
   let failed = 0;
+  let emailedDuringCycle = 0;
 
   for (const facility of pending) {
     // Checked per campground rather than per cycle: a sweep takes half an hour,
@@ -233,8 +234,30 @@ async function runCycle(): Promise<void> {
     current = facility.name;
     currentPark = facility.park.name;
     try {
-      await availabilityService.scanFacility(facility.id);
+      const summary = await availabilityService.scanFacility(facility.id);
       scanned++;
+
+      // Tell people now rather than at the end of the sweep. A pass takes
+      // around 24 minutes, so an opening found early would otherwise be
+      // announced twenty minutes late — long enough to lose a cancellation.
+      // Only the first opening per person goes out this way; the notifier
+      // batches the rest at the end of the pass.
+      if (summary.opened > 0) {
+        try {
+          const result = await notificationService.notifyFacility(facility.id);
+          if (result.emails > 0) {
+            emailedDuringCycle += result.emails;
+            logger.info(
+              { action: "scanner.notified_immediately", facilityId: facility.id, emails: result.emails },
+              "emailed watchers as soon as the opening was found",
+            );
+          }
+        } catch (err) {
+          // Contained: mail is not worth abandoning the sweep for, and the
+          // end-of-pass run picks up whatever did not go out.
+          logger.warn({ action: "scanner.immediate_notify_failed", facilityId: facility.id, err }, "immediate notify failed");
+        }
+      }
     } catch (err) {
       // Left for the next pass. A failure costs freshness, not correctness —
       // the stored window simply keeps the values it already had.
@@ -278,7 +301,9 @@ async function runCycle(): Promise<void> {
   // separately: a mail problem must not stop the next sweep.
   try {
     const result = await notificationService.runOnce();
-    if (result.emails > 0) logger.info({ action: "scanner.notified", ...result }, "notifier ran after cycle");
+    if (result.emails > 0 || emailedDuringCycle > 0) {
+      logger.info({ action: "scanner.notified", ...result, emailedDuringCycle }, "notifier ran after cycle");
+    }
   } catch (err) {
     logger.error({ action: "scanner.notify_failed", err }, "notifier failed after cycle");
   }

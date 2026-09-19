@@ -65,6 +65,7 @@ interface Match {
 
 export const notificationService = {
   runOnce,
+  notifyFacility,
   getStatus,
   getQuotaStatus,
 };
@@ -108,78 +109,151 @@ async function getQuotaStatus(): Promise<QuotaStatus> {
  * One pass: claim unreported openings, work out who wanted them, send one
  * email per person, then mark the events handled.
  */
-async function runOnce(): Promise<{ events: number; emails: number }> {
-  const events = await availabilityRepository.listUnnotifiedOpenings(BATCH_LIMIT);
-  if (events.length === 0) return { events: 0, emails: 0 };
+/**
+ * Users already emailed during the sweep in progress.
+ *
+ * The first opening we find for someone goes out at once; anything else that
+ * opens for them in the same sweep waits for the end-of-pass run and arrives as
+ * one message. So a person gets at most two emails per sweep, and someone
+ * watching a single campground gets exactly one, immediately.
+ */
+const emailedThisSweep = new Set<string>();
 
-  const facilityIds = [...new Set(events.map((e) => e.facilityId))];
-  const watches = await watchRepository.listActiveByFacilityIds(facilityIds);
+/** Group matches by who should hear about them. */
+function groupByUser(matches: Match[]): Map<string, Match[]> {
+  const byUser = new Map<string, Match[]>();
+  for (const match of matches) {
+    const list = byUser.get(match.userId) ?? [];
+    list.push(match);
+    byUser.set(match.userId, list);
+  }
+  return byUser;
+}
 
-  let sent = 0;
+/**
+ * Send one email per user, respecting the daily allowance and their preference.
+ *
+ * Shared by both paths — the immediate send during a sweep and the sweep-up at
+ * the end — so the quota, opt-out and failure handling can only be written once.
+ */
+async function sendToUsers(byUser: Map<string, Match[]>): Promise<{
+  sent: number;
+  notifiedByUser: Record<string, string[]>;
+}> {
   const notifiedByUser: Record<string, string[]> = {};
+  let sent = 0;
+  if (byUser.size === 0) return { sent, notifiedByUser };
 
-  if (watches.length > 0) {
-    const freeNights = await loadFreeNights(events);
-    const matches = findMatches(events, watches, freeNights);
+  let budget = (await getQuotaStatus()).remaining;
 
-    const byUser = new Map<string, Match[]>();
-    for (const match of matches) {
-      const list = byUser.get(match.userId) ?? [];
-      list.push(match);
-      byUser.set(match.userId, list);
+  for (const [userId, userMatches] of byUser) {
+    const email = userMatches[0]!.email;
+
+    // Out of allowance. Nothing is queued for later: by the next pass these
+    // sites have most likely gone, and that pass will find what is open then.
+    if (budget <= 0) {
+      logger.info({ action: "notifier.skipped_quota", userId }, "no send allowance left this window");
+      continue;
     }
 
-    let budget = (await getQuotaStatus()).remaining;
-
-    for (const [userId, userMatches] of byUser) {
-      const email = userMatches[0]!.email;
-
-      // Out of allowance. Nothing is queued for later: by the next pass these
-      // sites have most likely gone, and that pass will find what is open then.
-      if (budget <= 0) {
-        logger.info({ action: "notifier.skipped_quota", userId }, "no send allowance left this window");
+    try {
+      // Watches keep running when email is off — the user just isn't told, and
+      // can still see openings in-app. So this skips the send, not the scan.
+      const prefs = await preferenceService.getForUser(userId);
+      if (!prefs.emailNotifications) {
+        logger.info({ action: "notifier.skipped_opted_out", userId }, "user has email notifications off");
         continue;
       }
 
-      try {
-        // Watches keep running when email is off — the user just isn't told,
-        // and can still see openings in-app. So this skips the send, not the
-        // scan.
-        const prefs = await preferenceService.getForUser(userId);
-        if (!prefs.emailNotifications) {
-          logger.info({ action: "notifier.skipped_opted_out", userId }, "user has email notifications off");
-          continue;
-        }
-
-        const token = await preferenceService.getUnsubscribeToken(userId);
-        await emailSender.send(buildEmail(userMatches, token));
-        sent++;
-        budget--;
-        notifiedByUser[userId] = [...new Set(userMatches.map((m) => m.eventId))];
-        logger.info({ action: "notifier.sent", userId, openings: userMatches.length }, "opening email sent");
-      } catch (err) {
-        if (err instanceof EmailQuotaExceededError) {
-          // Resend's own count outranks ours — it can see mail we did not send.
-          budget = 0;
-          logger.warn({ action: "notifier.quota_exhausted", userId, err }, "Resend daily quota exhausted");
-          continue;
-        }
-        logger.warn({ action: "notifier.send_failed", userId, email, err }, "opening email failed to send");
+      const token = await preferenceService.getUnsubscribeToken(userId);
+      await emailSender.send(buildEmail(userMatches, token));
+      sent++;
+      budget--;
+      emailedThisSweep.add(userId);
+      notifiedByUser[userId] = [...new Set(userMatches.map((m) => m.eventId))];
+      logger.info({ action: "notifier.sent", userId, openings: userMatches.length }, "opening email sent");
+    } catch (err) {
+      if (err instanceof EmailQuotaExceededError) {
+        // Resend's own count outranks ours — it can see mail we did not send.
+        budget = 0;
+        logger.warn({ action: "notifier.quota_exhausted", userId, err }, "Resend daily quota exhausted");
+        continue;
       }
+      logger.warn({ action: "notifier.send_failed", userId, email, err }, "opening email failed to send");
+    }
+  }
+
+  return { sent, notifiedByUser };
+}
+
+/**
+ * Email the watchers of one campground, the moment its scan finds an opening.
+ *
+ * A sweep takes around 24 minutes, so waiting for it to finish means an opening
+ * found early is announced twenty minutes late — long enough to lose a
+ * cancellation at a popular park. This sends on the spot instead.
+ *
+ * Only people not already emailed this sweep are included; the rest are left to
+ * the end-of-pass run, which batches them into one message rather than mailing
+ * somebody once per campground.
+ *
+ * Only openings actually sent are stamped here. Anything left — nobody
+ * watching, out of allowance, a failed send — stays for `runOnce`, which
+ * stamps the remainder at the end of the sweep.
+ */
+async function notifyFacility(facilityId: string): Promise<{ emails: number }> {
+  const events = await availabilityRepository.listUnnotifiedOpenings(BATCH_LIMIT, facilityId);
+  if (events.length === 0) return { emails: 0 };
+
+  const watches = await watchRepository.listActiveByFacilityIds([facilityId]);
+  if (watches.length === 0) return { emails: 0 };
+
+  const freeNights = await loadFreeNights(events);
+  const byUser = groupByUser(findMatches(events, watches, freeNights));
+  for (const userId of byUser.keys()) {
+    if (emailedThisSweep.has(userId)) byUser.delete(userId);
+  }
+
+  const { sent, notifiedByUser } = await sendToUsers(byUser);
+  const stamped = Object.values(notifiedByUser).flat();
+  if (stamped.length > 0) await availabilityRepository.markNotified(stamped);
+  if (sent > 0) await emailLogRepository.record(sent, notifiedByUser);
+
+  return { emails: sent };
+}
+
+/**
+ * The end of a sweep: tell anyone still owed something, then wipe the slate.
+ */
+async function runOnce(): Promise<{ events: number; emails: number }> {
+  const events = await availabilityRepository.listUnnotifiedOpenings(BATCH_LIMIT);
+
+  let sent = 0;
+  let notifiedByUser: Record<string, string[]> = {};
+
+  if (events.length > 0) {
+    const facilityIds = [...new Set(events.map((e) => e.facilityId))];
+    const watches = await watchRepository.listActiveByFacilityIds(facilityIds);
+
+    if (watches.length > 0) {
+      const freeNights = await loadFreeNights(events);
+      const result = await sendToUsers(groupByUser(findMatches(events, watches, freeNights)));
+      sent = result.sent;
+      notifiedByUser = result.notifiedByUser;
     }
   }
 
   // Everything still waiting is stamped, sent or not, so the next pass starts
-  // clean. Carrying an opening forward is not worth it: a sweep takes about 35
+  // clean. Carrying an opening forward is not worth it: a sweep takes about 24
   // minutes, so by then the site has very likely gone, and mailing a booked
   // site is worse than saying nothing. The next sweep finds what is open then.
   const handled = await availabilityRepository.markAllOpeningsNotified();
   if (sent > 0) await emailLogRepository.record(sent, notifiedByUser);
 
-  logger.info(
-    { action: "notifier.pass", events: events.length, emails: sent, handled },
-    "notifier pass complete",
-  );
+  // The sweep is over; everyone is eligible for an immediate email again.
+  emailedThisSweep.clear();
+
+  logger.info({ action: "notifier.pass", events: events.length, emails: sent, handled }, "notifier pass complete");
   return { events: events.length, emails: sent };
 }
 

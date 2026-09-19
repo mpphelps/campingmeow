@@ -148,9 +148,10 @@ export const availabilityRepository = {
    * The notifier's outbox read: openings nobody has been told about yet,
    * oldest first. Bounded so one pass can't try to email the world.
    */
-  async listUnnotifiedOpenings(limit: number) {
+  /** `facilityId` narrows it to one campground, for the send that happens mid-sweep. */
+  async listUnnotifiedOpenings(limit: number, facilityId?: string) {
     return prisma.availabilityEvent.findMany({
-      where: { type: "opened", notifiedAt: null },
+      where: { type: "opened", notifiedAt: null, ...(facilityId ? { facilityId } : {}) },
       orderBy: { detectedAt: "desc" },
       take: limit,
       select: { id: true, facilityId: true, unitId: true, unitName: true, date: true },
