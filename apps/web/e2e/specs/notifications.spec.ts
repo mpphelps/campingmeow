@@ -229,3 +229,94 @@ test.describe("daily email cap", () => {
     await expect(page.getByText("Your watches keep running", { exact: false })).toBeVisible();
   });
 });
+
+/**
+ * A sweep takes around 24 minutes, so waiting for it to finish means an opening
+ * found early is announced twenty minutes late — long enough to lose a
+ * cancellation at a popular park. The first opening we find for someone is
+ * mailed on the spot; anything else that opens for them in the same sweep is
+ * batched at the end, so nobody gets one email per campground.
+ */
+test.describe("immediate notification", () => {
+  test.use({ user: null });
+
+  test.beforeEach(() => {
+    stubSender.sent.length = 0;
+  });
+
+  test("mails the watcher as soon as their campground opens", async () => {
+    const fri = nextWeekday(5);
+    const { user, facility } = await setup({ checkinDays: [5], nights: 1 });
+    await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
+    const event = await openingEvent(facility.id, fri);
+
+    const result = await notificationService.notifyFacility(facility.id);
+
+    expect(result.emails).toBe(1);
+    expect(stubSender.sent[0]!.to).toBe(user.email);
+
+    // Stamped, so the end-of-sweep run does not send it twice.
+    const after = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(after.notifiedAt).not.toBeNull();
+
+    stubSender.sent.length = 0;
+    expect((await notificationService.runOnce()).emails).toBe(0);
+    expect(stubSender.sent).toHaveLength(0);
+  });
+
+  test("a second campground opening in the same sweep waits for the end", async () => {
+    const fri = nextWeekday(5);
+    const { user, facility } = await setup({ checkinDays: [5], nights: 1 });
+    await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
+    await openingEvent(facility.id, fri);
+
+    // First campground: goes out at once.
+    expect((await notificationService.notifyFacility(facility.id)).emails).toBe(1);
+
+    // A second campground the same person watches opens later in the sweep.
+    const second = await createFacility({ name: "Second Camp", parkId: facility.parkId, lastScannedAt: new Date() });
+    await createWatch({ userId: user.id, facilityIds: second.id, checkinDays: [5], nights: 1 });
+    // Same unit id as openingEvent uses, or the stay would not be free.
+    await createSlots({ facilityId: second.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
+    await openingEvent(second.id, fri);
+
+    stubSender.sent.length = 0;
+    // Held back — they have already had one this sweep.
+    expect((await notificationService.notifyFacility(second.id)).emails).toBe(0);
+    expect(stubSender.sent).toHaveLength(0);
+
+    // The end of the sweep delivers it, as one message.
+    expect((await notificationService.runOnce()).emails).toBe(1);
+    expect(stubSender.sent).toHaveLength(1);
+    expect(stubSender.sent[0]!.text).toContain("Second Camp");
+  });
+
+  test("the next sweep can mail them immediately again", async () => {
+    const fri = nextWeekday(5);
+    const { facility } = await setup({ checkinDays: [5], nights: 1 });
+    await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [fri] });
+    await openingEvent(facility.id, fri);
+
+    expect((await notificationService.notifyFacility(facility.id)).emails).toBe(1);
+    // Ends the sweep, which clears who has already been emailed.
+    await notificationService.runOnce();
+
+    await openingEvent(facility.id, nextWeekday(5));
+    stubSender.sent.length = 0;
+    expect((await notificationService.notifyFacility(facility.id)).emails).toBe(1);
+  });
+
+  test("sends nothing when nobody watches that campground", async () => {
+    const park = await createPark({ name: "Unwatched Park" });
+    const facility = await createFacility({ name: "Unwatched Camp", parkId: park.id, lastScannedAt: new Date() });
+    await createSlots({ facilityId: facility.id, unitId: UNIT_ID, unitName: SITE, dates: [nextWeekday(5)] });
+    const event = await openingEvent(facility.id, nextWeekday(5));
+
+    expect((await notificationService.notifyFacility(facility.id)).emails).toBe(0);
+    expect(stubSender.sent).toHaveLength(0);
+
+    // Left unstamped for the end-of-sweep run, which retires it.
+    const after = await prisma.availabilityEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(after.notifiedAt).toBeNull();
+  });
+});
