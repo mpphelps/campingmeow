@@ -59,7 +59,42 @@ export const adminService = {
   getDashboard,
   setScannerPaused,
   setUserBanned,
+  recheckNonBookable,
 };
+
+/**
+ * Re-scan the campgrounds we have marked unbookable.
+ *
+ * A campground is demoted the first time it reports nothing bookable, and
+ * nothing promotes it back on its own — a site closed for winter stays closed
+ * to us until someone asks. This is that ask.
+ *
+ * Manual on purpose. Self-healing is not built yet, and re-checking today's
+ * window will not reveal a campground that only opens in summer. Both are
+ * known gaps, written down rather than papered over.
+ *
+ * It lives here rather than in the availability service because it is an admin
+ * action that happens to drive scans, and keeping it out of that service keeps
+ * the scan path free of the auth import chain.
+ */
+async function recheckNonBookable(user: AuthUser): Promise<{ checked: number; nowBookable: string[] }> {
+  authService.requirePermission(user, ADMIN_PERMISSION);
+  const candidates = await facilityRepository.listNonBookable();
+  logger.info({ action: "recheck.start", count: candidates.length, userId: user.id }, "re-checking non-bookable campgrounds");
+
+  const nowBookable: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const summary = await availabilityService.scanFacility(candidate.id);
+      if (summary.status === "bookable") nowBookable.push(summary.facilityName);
+    } catch (err) {
+      logger.warn({ action: "recheck.failed", facilityId: candidate.id, err }, "re-check failed");
+    }
+  }
+
+  logger.info({ action: "recheck.complete", checked: candidates.length, promoted: nowBookable.length }, "re-check complete");
+  return { checked: candidates.length, nowBookable };
+}
 
 /**
  * Ban or unban an account.

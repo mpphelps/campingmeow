@@ -21,8 +21,6 @@ import {
 } from "../repositories/availability.repository.server";
 import { facilityRepository } from "../repositories/facility.repository.server";
 import { parkRepository } from "../repositories/park.repository.server";
-import { authService, type AuthUser } from "./auth.service.server";
-import { ADMIN_PERMISSION } from "./admin.service.server";
 
 // Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
 // packages/scanner/src/rate-limit.ts), not here — otherwise concurrent callers
@@ -73,6 +71,11 @@ export interface ScanSummary {
   sites: number;
   slots: number;
   freeSlots: number;
+  /**
+   * Nights the first read called free and the confirming read did not. A
+   * running count of how often ReserveCalifornia hands us a wrong answer.
+   */
+  rejected: number;
   /** Nights actually written this scan. Steady state should be a handful. */
   changed: number;
   /** Nights dropped because the grid no longer lists them. */
@@ -92,41 +95,12 @@ export interface ScanSummary {
 export const availabilityService = {
   searchOpenings,
   findNearby,
-  recheckNonBookable,
   getFacilityCalendar,
   getWatchCalendar,
   getRateLimitState,
   getQueueDepth,
   scanFacility,
 };
-
-/**
- * Re-scan every campground currently marked non-bookable, to see whether any
- * has gained inventory.
- *
- * Manual on purpose. Self-healing is not built yet: a seasonal campground
- * demoted in winter stays demoted until someone runs this, and re-checking
- * today's window won't reveal a campground that only opens in summer. Both are
- * known gaps, written down rather than papered over.
- */
-async function recheckNonBookable(user: AuthUser): Promise<{ checked: number; nowBookable: string[] }> {
-  authService.requirePermission(user, ADMIN_PERMISSION);
-  const candidates = await facilityRepository.listNonBookable();
-  logger.info({ action: "recheck.start", count: candidates.length, userId: user.id }, "re-checking non-bookable campgrounds");
-
-  const nowBookable: string[] = [];
-  for (const candidate of candidates) {
-    try {
-      const summary = await scanFacility(candidate.id);
-      if (summary.status === "bookable") nowBookable.push(summary.facilityName);
-    } catch (err) {
-      logger.warn({ action: "recheck.failed", facilityId: candidate.id, err }, "re-check failed");
-    }
-  }
-
-  logger.info({ action: "recheck.complete", checked: candidates.length, promoted: nowBookable.length }, "re-check complete");
-  return { checked: candidates.length, nowBookable };
-}
 
 // ---------------------------------------------------------------- read path
 
@@ -401,26 +375,24 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
 
   const availability = await fetchFacilityAvailability(facility.rcFacilityId, start, end);
 
-  // The grid only reports free nights per site; every date in the window that
-  // a site is not free is stored as taken, so searches can tell the
-  // difference between "booked" and "never scanned".
   const windowDates = eachDay(start, end);
-  const slots = availability.sites.flatMap((site) =>
-    windowDates.map((date) => ({
-      unitId: site.unitId,
-      unitName: site.name,
-      date: toDate(date),
-      isFree: site.freeNights.has(date),
-    })),
-  );
+  const slots = toSlots(availability, windowDates);
 
   // The "before" picture. Read outside the transaction deliberately: only
   // another scan of this same facility could change it, and scanFacility's
   // in-flight map already guarantees there isn't one. The write below is still
   // atomic, which is what actually matters.
   const previous = await availabilityRepository.listWindow(facility.id, toDate(start), toDate(end));
-  const events = diffEvents(previous, slots);
 
+  // Anything that looks like an opening gets a second look before we believe
+  // it. See confirmOpenings — ReserveCalifornia sometimes reports booked sites
+  // as free, and an unconfirmed opening becomes an email about nothing.
+  let rejected = 0;
+  if (diffEvents(previous, slots).some((e) => e.type === "opened")) {
+    rejected = await confirmOpenings(facility.rcFacilityId, start, end, windowDates, slots);
+  }
+
+  const events = diffEvents(previous, slots);
   const delta = diffSlots(previous, slots);
   await availabilityRepository.applyWindowDelta(facility.id, delta, events);
 
@@ -449,8 +421,17 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     removed: delta.removals.length,
     opened: events.filter((e) => e.type === "opened").length,
     closed: events.filter((e) => e.type === "closed").length,
+    rejected,
     status,
   };
+  if (rejected > 0) {
+    // Worth its own line: this is the measure of how often ReserveCalifornia
+    // hands us availability that is not real, across the whole catalog.
+    logger.warn(
+      { action: "scan.openings_rejected", facilityId: facility.id, facilityName: facility.name, rejected },
+      "second read contradicted the first; treated those nights as booked",
+    );
+  }
   logger.info({ action: "scan.facility.complete", ...summary }, "facility scan complete");
   return summary;
 }
@@ -476,6 +457,83 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
  * name) changed; `removals` covers nights that were stored but are no longer
  * in the grid at all — a site retired, or a date that rolled out of view.
  */
+/**
+ * Flatten a grid read into one row per site per night.
+ *
+ * Every date in the window gets a row, taken ones included, so a search can
+ * tell "booked" apart from "never scanned".
+ */
+function toSlots(
+  availability: Awaited<ReturnType<typeof fetchFacilityAvailability>>,
+  windowDates: ISODate[],
+): SlotInput[] {
+  return availability.sites.flatMap((site) =>
+    windowDates.map((date) => ({
+      unitId: site.unitId,
+      unitName: site.name,
+      date: toDate(date),
+      isFree: site.freeNights.has(date),
+    })),
+  );
+}
+
+/**
+ * Read the facility a second time and keep only the openings both reads agree on.
+ *
+ * ReserveCalifornia's grid is not deterministic: measured 2026-09-19, roughly
+ * one response in eight came back with a whole block of booked sites marked
+ * free — same facility, same dates, same request, seconds apart. It is a stale
+ * cache or replica, and it fabricates availability, never reservations. Left
+ * alone it emails people about sites that were never bookable: one bad
+ * response at Crystal Cove produced ~100 phantom openings and four "36
+ * campsites just opened" messages a day. See packages/scanner/API.md §4c.
+ *
+ * Because the failure only ever invents availability, the safe reconciliation
+ * is the intersection — free in both reads, or not free. That is right
+ * whichever of the two responses was the bad one, so there is no need to guess.
+ *
+ * `slots` is mutated in place to the reconciled truth. Returns how many nights
+ * were rejected, which is our only measure of how often the API lies.
+ *
+ * Deliberately only called when a scan claims an opening: that keeps the cost
+ * off the common path, where nothing changed and there is nothing to check.
+ */
+async function confirmOpenings(
+  rcFacilityId: number,
+  start: ISODate,
+  end: ISODate,
+  windowDates: ISODate[],
+  slots: SlotInput[],
+): Promise<number> {
+  let second: Awaited<ReturnType<typeof fetchFacilityAvailability>>;
+  try {
+    second = await fetchFacilityAvailability(rcFacilityId, start, end);
+  } catch (err) {
+    // No second opinion available. Treating the first read as booked would
+    // drop real openings on every hiccup, so it stands — this is a best-effort
+    // check, not a gate.
+    logger.warn({ action: "scan.confirm_failed", rcFacilityId, err }, "could not confirm openings");
+    return 0;
+  }
+
+  const confirmed = new Set(
+    toSlots(second, windowDates)
+      .filter((slot) => slot.isFree)
+      .map((slot) => slotKey(slot.unitId, slot.date)),
+  );
+
+  let rejected = 0;
+  for (const slot of slots) {
+    if (!slot.isFree) continue;
+    if (confirmed.has(slotKey(slot.unitId, slot.date))) continue;
+    // The second read disagrees. Store it as booked: a missed opening costs
+    // one cycle, an invented one costs someone's trust.
+    slot.isFree = false;
+    rejected++;
+  }
+  return rejected;
+}
+
 function diffSlots(
   previous: { unitId: number; unitName: string; date: Date; isFree: boolean }[],
   next: SlotInput[],
