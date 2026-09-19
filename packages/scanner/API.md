@@ -228,6 +228,40 @@ retried, with exponential backoff (on top of the gate's one-second spacing).
 
 ---
 
+## 4c. The grid intermittently reports booked sites as free
+
+**Measured 2026-09-19.** Eight identical `search/grid` requests for Crystal Cove
+Beach Cottages (FacilityId 757), seconds apart, same date range, same body:
+
+```
+run 1: freeSlices=  1
+run 2: freeSlices=180   <-- same request, same second range
+run 3: freeSlices=  1
+run 4..8: freeSlices=  1
+```
+
+Roughly one response in eight came back with an entire block of sites marked
+`IsFree: true` that every other response — and the website itself — reported as
+booked or blocked. Most likely a cache miss or a read replica that has not had
+holds applied.
+
+The failure is **one-directional**: it fabricates availability, never
+reservations. It shows up as a whole block opening at once rather than the odd
+night here and there, because a stale replica misses every hold together.
+
+At Crystal Cove this produced ~100 phantom openings at a time (9 dorm units
+across ~12 nights) and about four "36 campsites just opened" emails a day to a
+real user. Everything on our side checked out: paging covered all 64 days with
+no gaps, consecutive runs of `fetchFacilityAvailability` were byte-identical,
+`IsBlocked` was read correctly, and the stored slots matched the API exactly.
+We recorded a wrong answer faithfully.
+
+**Consequence: one observation is not evidence.** Anything that turns a scan
+into a claim to a user needs a second, confirming read, and a night should
+count as free only when both reads agree. It is also why debugging
+"emails about nothing" must start by querying the API repeatedly — a single
+probe that agrees, or disagrees, proves nothing.
+
 ## 5. Other endpoints seen in the web app (not used here, for reference)
 
 ```

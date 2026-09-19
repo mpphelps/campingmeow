@@ -1,7 +1,7 @@
 import { ScanQueueFullError } from "@campingmeow/scanner";
 import { ForbiddenError } from "~/lib/errors";
 import { authService } from "~/services/auth.service.server";
-import { availabilityService } from "~/services/availability.service.server";
+import { adminService } from "~/services/admin.service.server";
 import type { Route } from "./+types/api.recheck-facilities";
 
 /**
@@ -19,7 +19,7 @@ export async function action({ request }: Route.ActionArgs) {
   if (!user) return new Response("Unauthorized", { status: 401 });
 
   try {
-    return Response.json(await availabilityService.recheckNonBookable(user));
+    return Response.json(await adminService.recheckNonBookable(user));
   } catch (err) {
     if (err instanceof ForbiddenError) return new Response("Forbidden", { status: 403 });
     if (err instanceof ScanQueueFullError) {
