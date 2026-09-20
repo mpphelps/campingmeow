@@ -68,8 +68,16 @@ test.describe("home parks browser", () => {
     await createFacility({ name: "Borrego Palm Canyon", parkId: anza.id });
 
     await page.goto("/");
-    // There's no Search button anymore — filtering happens on every keystroke, client-side.
-    await page.getByLabel("Search parks").fill("yose");
+    // There's no Search button anymore — filtering happens on every keystroke,
+    // client-side. That means it only works once React has hydrated, and the
+    // server-rendered page looks identical before and after. A fill() that
+    // lands first sets the input's value without ever running the filter, so
+    // retry until the filter actually responds — otherwise this fails roughly
+    // half the time under full-suite load.
+    await expect(async () => {
+      await page.getByLabel("Search parks").fill("yose");
+      await expect(page.getByText("Anza-Borrego")).toHaveCount(0);
+    }).toPass({ timeout: 15_000 });
 
     await expect(page).toHaveURL(/\/$/);
     // exact:true avoids matching the city span too — city "Yosemite Village" contains "Yosemite".

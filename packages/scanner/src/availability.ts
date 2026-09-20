@@ -11,6 +11,15 @@ export interface SiteAvailability {
   unitId: number;
   name: string;
   freeNights: Set<ISODate>;
+  /**
+   * Every night RC returned a slice for, free or taken.
+   *
+   * Absence is meaningful: RC simply omits nights a site is not offered for —
+   * a seasonal closure, say. Recording which nights it spoke about is what
+   * separates a real cancellation (taken -> free) from a broken server
+   * inventing availability for a closed season (absent -> free). See API.md §4c.
+   */
+  reportedNights: Set<ISODate>;
 }
 
 export interface FacilityAvailability {
@@ -56,10 +65,11 @@ export function mergeGrid(
     if (unit.VehicleLength > maxVehicleLength) maxVehicleLength = unit.VehicleLength;
     let site = into.get(unit.UnitId);
     if (!site) {
-      site = { unitId: unit.UnitId, name: unit.Name, freeNights: new Set() };
+      site = { unitId: unit.UnitId, name: unit.Name, freeNights: new Set(), reportedNights: new Set() };
       into.set(unit.UnitId, site);
     }
     for (const slice of Object.values(unit.Slices ?? {})) {
+      site.reportedNights.add(slice.Date);
       if (slice.IsFree) site.freeNights.add(slice.Date);
     }
   }

@@ -118,6 +118,14 @@ model AvailabilitySlot {
   unitName   String
   date       DateTime @db.Date
   isFree     Boolean
+  /// Did ReserveCalifornia actually return a slice for this night?
+  ///
+  /// "RC said nothing" and "RC said booked" both read as isFree = false, and
+  /// without this they are indistinguishable — which is exactly how a broken
+  /// RC server's invented availability passes as a cancellation. A night going
+  /// absent -> free is fabrication; reported-and-taken -> free is a real
+  /// opening. See packages/scanner/API.md §4c.
+  reported   Boolean  @default(false)
   updatedAt  DateTime @updatedAt
 
   @@unique([facilityId, unitId, date])

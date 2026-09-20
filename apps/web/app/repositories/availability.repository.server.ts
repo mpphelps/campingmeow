@@ -5,6 +5,8 @@ export interface SlotInput {
   unitName: string;
   date: Date;
   isFree: boolean;
+  /** Did RC return a slice for this night? See the column comment in schema.prisma. */
+  reported: boolean;
 }
 
 export interface EventInput {
@@ -19,7 +21,7 @@ export const availabilityRepository = {
   async listWindow(facilityId: string, windowStart: Date, windowEnd: Date) {
     return prisma.availabilitySlot.findMany({
       where: { facilityId, date: { gte: windowStart, lte: windowEnd } },
-      select: { unitId: true, unitName: true, date: true, isFree: true },
+      select: { unitId: true, unitName: true, date: true, isFree: true, reported: true },
     });
   },
 
