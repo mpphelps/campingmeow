@@ -23,6 +23,9 @@ async function scan(facilityId: string, freeByDate: Record<string, boolean>) {
     unitName: "Site 1",
     date: d(date),
     isFree,
+    // These tests are about the event diff, not invented availability, so every
+    // night here is one RC actually reported.
+    reported: true,
   }));
   const previous = await availabilityRepository.listWindow(facilityId, START, END);
   const before = new Map(previous.map((p) => [`${p.unitId}:${p.date.toISOString().slice(0, 10)}`, p.isFree]));

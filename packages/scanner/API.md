@@ -256,11 +256,24 @@ no gaps, consecutive runs of `fetchFacilityAvailability` were byte-identical,
 `IsBlocked` was read correctly, and the stored slots matched the API exactly.
 We recorded a wrong answer faithfully.
 
-**Consequence: one observation is not evidence.** Anything that turns a scan
-into a claim to a user needs a second, confirming read, and a night should
-count as free only when both reads agree. It is also why debugging
-"emails about nothing" must start by querying the API repeatedly — a single
-probe that agrees, or disagrees, proves nothing.
+**What is actually happening: it invents nights, it does not flip them.**
+RC omits nights a site is not offered for — a seasonal closure — and the bad
+response fills the gap in. Measured on one Crystal Cove dorm over the same
+21-night window:
+
+```
+healthy:   2 nights returned   (10-18 taken, 10-19 free)
+bad:      21 nights returned   (10-19 through 11-07 all free)
+```
+
+The cottages, which run year-round and have no gaps, were byte-identical in
+both. Only sites with a hole in the calendar get filled in.
+
+**Consequence: absence is the signal.** Six identical reads returned exactly the
+same set of nights, so which nights a response covers is reliable even when the
+values are not. A night going **absent -> free** is invention; **reported-and-
+taken -> free** is a real cancellation. That is deterministic and needs no
+second request — see `AvailabilitySlot.reported`.
 
 ## 5. Other endpoints seen in the web app (not used here, for reference)
 

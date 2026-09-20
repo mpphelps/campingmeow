@@ -19,15 +19,22 @@ const UNIT_ID = 50001;
 const UNIT_NAME = "Beach Dorm (4 ppl) #38B";
 
 export interface FakeRc {
-  /** Free nights returned per read, in order. The last entry repeats. */
-  setReads(reads: string[][]): void;
+  /**
+   * What each read returns, in order; the last entry repeats.
+   *
+   * `reported` is every night a slice comes back for — absence is meaningful,
+   * since RC omits nights a site is not offered for. `free` must be a subset.
+   * A read whose `reported` includes nights the healthy read omits is exactly
+   * the fabrication we are defending against.
+   */
+  setReads(reads: { reported: string[]; free: string[] }[]): void;
   /** How many grid requests have been served. */
   readonly requests: number;
   close(): Promise<void>;
 }
 
 export async function startFakeRc(): Promise<FakeRc> {
-  let reads: string[][] = [[]];
+  let reads: { reported: string[]; free: string[] }[] = [{ reported: [], free: [] }];
   let readIndex = -1;
   let requests = 0;
   // One read is several paged requests, so the answer only advances when a
@@ -46,11 +53,16 @@ export async function startFakeRc(): Promise<FakeRc> {
       }
       pagesLeft--;
 
-      const free = new Set(reads[Math.max(readIndex, 0)] ?? []);
+      const read = reads[Math.max(readIndex, 0)] ?? { reported: [], free: [] };
+      const reported = new Set(read.reported);
+      const free = new Set(read.free);
       const start = new Date(`${StartDate}T00:00:00Z`);
       const slices: Record<string, unknown> = {};
       for (let d = 0; d < 21; d++) {
         const day = new Date(start.getTime() + d * 864e5).toISOString().slice(0, 10);
+        // Nights not in `reported` are simply absent, as RC does for a site it
+        // is not offering — the response has no key for them at all.
+        if (!reported.has(day)) continue;
         slices[`${day}T00:00:00`] = {
           Date: day,
           IsFree: free.has(day),
@@ -95,7 +107,7 @@ export async function startFakeRc(): Promise<FakeRc> {
   await new Promise<void>((resolve) => server.listen(PORT, "127.0.0.1", resolve));
 
   return {
-    setReads(next) {
+    setReads(next: { reported: string[]; free: string[] }[]) {
       reads = next;
       readIndex = -1;
       pagesLeft = 0;

@@ -132,9 +132,12 @@ and a date pattern; we watch, and email them when a match opens.
   which is a future filter, not an icon.
 - **Watch** — user, check-in weekdays, nights, active flag.
 - **WatchFacility** — join table: the campgrounds one watch covers.
-- **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`, updated
-  timestamp; unique per (facility, unit, date). Every night in the window is
-  stored, taken ones included, so search can tell "booked" from "never scanned".
+- **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`,
+  `reported`, updated timestamp; unique per (facility, unit, date). Every night
+  in the window is stored, taken ones included, so search can tell "booked" from
+  "never scanned". `reported` says whether RC returned a slice for that night at
+  all — without it, "RC said nothing" and "RC said booked" are the same value,
+  which is how invented availability passes as a cancellation (§4).
 - **AvailabilityEvent** — facility, unit, night, `opened`/`closed`,
   `detectedAt`, `notifiedAt`. Append-only transitions, written in the same
   transaction that overwrites the slots. A night with **no previous row produces
@@ -184,22 +187,29 @@ An admin can pause the sweep from the panel. It is checked between campgrounds
 rather than between cycles, because a pause that waits half an hour is not a
 pause.
 
-### An opening is only believed when a second read agrees
+### Invented availability is ignored
 
-RC's grid is not deterministic: about one response in eight reports a block of
-booked sites as free (measured 2026-09-19, `packages/scanner/API.md` §4c). One
-bad response at Crystal Cove produced ~100 phantom openings and four emails a
-day to a real user.
+RC omits nights a site is not offered for — a dorm block closed for the season —
+and a broken server in their fleet fills those gaps in and marks them free
+(measured 2026-09-19, `packages/scanner/API.md` §4c). One bad response at
+Crystal Cove produced ~100 phantom openings and four emails a day to a real user.
 
-So a scan that finds an opening re-reads the facility, and a night counts as
-free only if **both reads agree**. The failure only ever invents availability,
-so the intersection is right whichever response was bad. Rejected nights are
-stored as booked, which also kills the phantom `closed` events that followed
-one pass later.
+Absence is the tell, and it is reliable: six identical reads returned exactly
+the same set of nights. So `AvailabilitySlot.reported` records whether RC spoke
+about a night at all, and:
 
-Skipped when a scan finds nothing new, so it costs three extra requests only
-when there is something to announce. Each scan reports a `rejected` count — our
-measure of how often the API lies.
+- **reported and taken → free** is a cancellation. Event, email.
+- **absent → free** is invention. Ignored.
+
+A fabricated night is **carried forward untouched**, not stored as taken.
+Storing it would launder the lie into a legitimate baseline, and the next bad
+response would read as a real cancellation.
+
+This needs no second request and is deterministic rather than probabilistic.
+Each scan reports a `fabricated` count — our measure of how often the API
+invents availability. A season genuinely reopening is also `absent → free` and
+is suppressed too; that is accepted, since we are here to catch cancellations,
+and it is logged rather than silent.
 
 ### Writing only what changed
 
@@ -297,10 +307,8 @@ EmailLog row. If RC blocks us, the sweep stops and mail stops with it.
 - **No re-send while it stays open** — that falls out of events firing only on
   transitions, so only within-batch dedup on (watch, unit, check-in) is needed.
   Close and reopen is a new event and a new email.
-- **Nothing is emailed until a second read confirms it.** See §4; the API
-  reports booked sites as free often enough that a single observation is not
-  evidence. Events only exist for confirmed openings, so a phantom can never
-  reach an inbox.
+- **Invented availability never becomes an event.** See §4; a night RC has
+  never reported cannot "open", so a phantom can never reach an inbox.
 - **An immediate send stamps only what it sent.** The rest — unwatched, capped,
   or failed — fall to the end-of-pass run, which stamps **everything still
   waiting, sent or not**, so the next pass starts clean. By then the site has

@@ -115,7 +115,7 @@ Full setup, troubleshooting, and disaster-recovery runbooks live in **[`DEPLOYME
 
 The scanner and notifier run **inside the web app's process**, not separate containers: the rate limiter is per-process state, so a second container would double our request rate.
 
-Two behaviours worth knowing: an opening is **confirmed by a second read** before anyone is emailed (the grid reports booked sites as free ~1 in 8 responses), and a person's **first opening is emailed immediately** rather than at the end of the ~24-minute sweep, with the rest batched.
+Two behaviours worth knowing: a night RC has **never reported** cannot become an opening (their grid invents availability for closed seasons ~1 in 8 responses), and a person's **first opening is emailed immediately** rather than at the end of the ~24-minute sweep, with the rest batched.
 
 See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) for the design and [`packages/scanner/API.md`](./packages/scanner/API.md) for API notes.
 

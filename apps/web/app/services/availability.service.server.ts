@@ -72,10 +72,10 @@ export interface ScanSummary {
   slots: number;
   freeSlots: number;
   /**
-   * Nights the first read called free and the confirming read did not. A
-   * running count of how often ReserveCalifornia hands us a wrong answer.
+   * Nights this response claimed were free that RC had never reported before.
+   * A running count of how often ReserveCalifornia invents availability.
    */
-  rejected: number;
+  fabricated: number;
   /** Nights actually written this scan. Steady state should be a handful. */
   changed: number;
   /** Nights dropped because the grid no longer lists them. */
@@ -384,13 +384,10 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
   // atomic, which is what actually matters.
   const previous = await availabilityRepository.listWindow(facility.id, toDate(start), toDate(end));
 
-  // Anything that looks like an opening gets a second look before we believe
-  // it. See confirmOpenings — ReserveCalifornia sometimes reports booked sites
-  // as free, and an unconfirmed opening becomes an email about nothing.
-  let rejected = 0;
-  if (diffEvents(previous, slots).some((e) => e.type === "opened")) {
-    rejected = await confirmOpenings(facility.rcFacilityId, start, end, windowDates, slots);
-  }
+  // Throw out invented availability before anything reads it. See
+  // dropFabricated — this is what stops a broken RC server's phantom openings
+  // becoming email, and it needs no second request.
+  const fabricated = dropFabricated(previous, slots);
 
   const events = diffEvents(previous, slots);
   const delta = diffSlots(previous, slots);
@@ -421,15 +418,16 @@ async function runScan(facilityId: string): Promise<ScanSummary> {
     removed: delta.removals.length,
     opened: events.filter((e) => e.type === "opened").length,
     closed: events.filter((e) => e.type === "closed").length,
-    rejected,
+    fabricated,
     status,
   };
-  if (rejected > 0) {
+  if (fabricated > 0) {
     // Worth its own line: this is the measure of how often ReserveCalifornia
-    // hands us availability that is not real, across the whole catalog.
+    // invents availability, across the whole catalog. A season legitimately
+    // reopening also lands here, which is why it is logged rather than silent.
     logger.warn(
-      { action: "scan.openings_rejected", facilityId: facility.id, facilityName: facility.name, rejected },
-      "second read contradicted the first; treated those nights as booked",
+      { action: "scan.fabricated", facilityId: facility.id, facilityName: facility.name, fabricated },
+      "response claimed nights RC had never reported; ignored them",
     );
   }
   logger.info({ action: "scan.facility.complete", ...summary }, "facility scan complete");
@@ -473,69 +471,62 @@ function toSlots(
       unitName: site.name,
       date: toDate(date),
       isFree: site.freeNights.has(date),
+      reported: site.reportedNights.has(date),
     })),
   );
 }
 
 /**
- * Read the facility a second time and keep only the openings both reads agree on.
+ * Throw out availability ReserveCalifornia invented.
  *
- * ReserveCalifornia's grid is not deterministic: measured 2026-09-19, roughly
- * one response in eight came back with a whole block of booked sites marked
- * free — same facility, same dates, same request, seconds apart. It is a stale
- * cache or replica, and it fabricates availability, never reservations. Left
- * alone it emails people about sites that were never bookable: one bad
- * response at Crystal Cove produced ~100 phantom openings and four "36
- * campsites just opened" messages a day. See packages/scanner/API.md §4c.
+ * RC omits nights a site is not offered for — a dorm block closed for the
+ * season, say — and a broken server in their fleet fills those gaps in and
+ * marks them free. Measured 2026-09-19: one dorm returned 2 nights in a healthy
+ * response and 21 in a bad one, 19 of them fabricated. That produced ~100
+ * phantom openings at a time and four "36 campsites just opened" emails a day
+ * to a real user. See packages/scanner/API.md §4c.
  *
- * Because the failure only ever invents availability, the safe reconciliation
- * is the intersection — free in both reads, or not free. That is right
- * whichever of the two responses was the bad one, so there is no need to guess.
+ * Absence is the tell, and it is reliable: six identical reads returned exactly
+ * the same set of nights. So a night going **absent -> free** is invention,
+ * while **reported-and-taken -> free** is a genuine cancellation.
  *
- * `slots` is mutated in place to the reconciled truth. Returns how many nights
- * were rejected, which is our only measure of how often the API lies.
+ * Fabricated nights are carried forward — the stored row is left exactly as it
+ * was — rather than recorded as taken. Recording them would launder the lie
+ * into a legitimate baseline, and the *next* bad response would then read as a
+ * real cancellation and send the email we are trying to prevent.
  *
- * Deliberately only called when a scan claims an opening: that keeps the cost
- * off the common path, where nothing changed and there is nothing to check.
+ * A season genuinely reopening looks identical and is suppressed too. That is
+ * accepted: we are here to catch cancellations, and it is logged rather than
+ * silent.
+ *
+ * `slots` is mutated in place. Returns how many nights were ignored.
  */
-async function confirmOpenings(
-  rcFacilityId: number,
-  start: ISODate,
-  end: ISODate,
-  windowDates: ISODate[],
+function dropFabricated(
+  previous: { unitId: number; unitName: string; date: Date; isFree: boolean; reported: boolean }[],
   slots: SlotInput[],
-): Promise<number> {
-  let second: Awaited<ReturnType<typeof fetchFacilityAvailability>>;
-  try {
-    second = await fetchFacilityAvailability(rcFacilityId, start, end);
-  } catch (err) {
-    // No second opinion available. Treating the first read as booked would
-    // drop real openings on every hiccup, so it stands — this is a best-effort
-    // check, not a gate.
-    logger.warn({ action: "scan.confirm_failed", rcFacilityId, err }, "could not confirm openings");
-    return 0;
-  }
+): number {
+  const before = new Map(previous.map((slot) => [slotKey(slot.unitId, slot.date), slot]));
 
-  const confirmed = new Set(
-    toSlots(second, windowDates)
-      .filter((slot) => slot.isFree)
-      .map((slot) => slotKey(slot.unitId, slot.date)),
-  );
-
-  let rejected = 0;
+  let fabricated = 0;
   for (const slot of slots) {
     if (!slot.isFree) continue;
-    if (confirmed.has(slotKey(slot.unitId, slot.date))) continue;
-    // The second read disagrees. Store it as booked: a missed opening costs
-    // one cycle, an invented one costs someone's trust.
-    slot.isFree = false;
-    rejected++;
+    const was = before.get(slotKey(slot.unitId, slot.date));
+    // No stored row at all is discovery, not invention — a new site, or a date
+    // that has just rolled into the window. diffEvents already stays quiet for
+    // those, so let them through and be recorded.
+    if (!was || was.reported) continue;
+
+    // Carry the stored row forward untouched, so the diff sees no change.
+    slot.isFree = was.isFree;
+    slot.reported = was.reported;
+    slot.unitName = was.unitName;
+    fabricated++;
   }
-  return rejected;
+  return fabricated;
 }
 
 function diffSlots(
-  previous: { unitId: number; unitName: string; date: Date; isFree: boolean }[],
+  previous: { unitId: number; unitName: string; date: Date; isFree: boolean; reported: boolean }[],
   next: SlotInput[],
 ): { upserts: SlotInput[]; removals: { unitId: number; date: Date }[] } {
   const before = new Map(previous.map((slot) => [slotKey(slot.unitId, slot.date), slot]));
@@ -546,7 +537,13 @@ function diffSlots(
     const was = before.get(key);
     before.delete(key);
     // Unchanged nights are the overwhelming majority; leave them alone.
-    if (was && was.isFree === slot.isFree && was.unitName === slot.unitName) continue;
+    // `reported` belongs in this comparison: a night going from absent to
+    // reported-and-taken leaves isFree false on both sides, and without it that
+    // row would never be written — so the baseline a real opening is measured
+    // against would never get established.
+    if (was && was.isFree === slot.isFree && was.unitName === slot.unitName && was.reported === slot.reported) {
+      continue;
+    }
     upserts.push(slot);
   }
 
