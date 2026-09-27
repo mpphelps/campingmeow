@@ -38,6 +38,19 @@ export const loader = withAuth(async ({ request, user }: Route.LoaderArgs & { us
 
 export const action = withAuth(async ({ request, user }: Route.ActionArgs & { user: AuthUser }) => {
   const formData = await request.formData();
+  if (formData.get("intent") === "pause") {
+    const watchId = String(formData.get("watchId") ?? "");
+    const paused = formData.get("paused") === "true";
+    try {
+      const changed = await watchService.setWatchPaused(user.id, watchId, paused);
+      if (!changed) throw new Response("Not Found", { status: 404 });
+    } catch (err) {
+      if (err instanceof ForbiddenError) {
+        throw new Response(err.message, { status: 403 });
+      }
+      throw err;
+    }
+  }
   if (formData.get("intent") === "delete") {
     const watchId = String(formData.get("watchId") ?? "");
     try {
@@ -55,11 +68,14 @@ export const action = withAuth(async ({ request, user }: Route.ActionArgs & { us
 
 function WatchRow({ watch }: { watch: WatchListItem }) {
   const fetcher = useFetcher();
-  const deleting = fetcher.state !== "idle";
+  const busy = fetcher.state !== "idle";
+  const paused = !watch.active;
 
   return (
     <ListItem
-      className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${deleting ? "opacity-50" : ""}`}
+      className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${
+        busy ? "opacity-50" : paused ? "opacity-60" : ""
+      }`}
     >
       <div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -75,15 +91,27 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
         </div>
         <div className="mt-1 text-muted-foreground">
           Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · next nine weeks
+          {paused && <span className="ml-2 font-medium text-foreground">Paused</span>}
         </div>
       </div>
-      <fetcher.Form method="post">
-        <input type="hidden" name="intent" value="delete" />
-        <input type="hidden" name="watchId" value={watch.id} />
-        <Button type="submit" variant="outline" size="sm" disabled={deleting}>
-          Delete
-        </Button>
-      </fetcher.Form>
+      <div className="flex shrink-0 gap-2">
+        {/* Pause keeps the watch and its campgrounds; only the email stops. */}
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="pause" />
+          <input type="hidden" name="watchId" value={watch.id} />
+          <input type="hidden" name="paused" value={String(!paused)} />
+          <Button type="submit" variant="outline" size="sm" disabled={busy}>
+            {paused ? "Resume" : "Pause"}
+          </Button>
+        </fetcher.Form>
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="delete" />
+          <input type="hidden" name="watchId" value={watch.id} />
+          <Button type="submit" variant="outline" size="sm" disabled={busy}>
+            Delete
+          </Button>
+        </fetcher.Form>
+      </div>
     </ListItem>
   );
 }
@@ -96,7 +124,8 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
     <div>
       <h1 className="text-4xl font-semibold">My watches</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        We scan ReserveCalifornia for these patterns and email you when something opens up.
+        We scan ReserveCalifornia for these patterns and email you when something opens up. Pausing a watch keeps it and
+        its campgrounds — it just stops the email until you resume.
       </p>
 
       {watches.length === 0 ? (

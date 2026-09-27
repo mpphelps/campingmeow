@@ -37,6 +37,7 @@ export interface CreateWatchInput {
 export const watchService = {
   createWatch,
   listWatchesForUser,
+  setWatchPaused,
   deleteWatch,
 };
 
@@ -81,7 +82,7 @@ async function createWatch(userId: string, input: CreateWatchInput): Promise<Wat
   if (Object.keys(fields).length === 0) {
     const existing = await watchRepository.countActiveByUserId(userId);
     if (existing >= MAX_WATCHES_PER_USER) {
-      fields.facilityIds = `You already have ${existing} watches, which is the limit. Delete one to make room.`;
+      fields.facilityIds = `You already have ${existing} watches, which is the limit. Pause or delete one to make room.`;
     }
   }
 
@@ -108,6 +109,29 @@ async function listWatchesForUser(userId: string): Promise<WatchListItem[]> {
 }
 
 /** Returns false if the watch doesn't exist. Throws if it belongs to someone else. */
+/**
+ * Pause or resume one watch, without deleting it.
+ *
+ * The account-level email toggle silences everything at once; this is for "not
+ * this one right now" — keeping a carefully built list of campgrounds and date
+ * pattern while it is not wanted. The notifier already skips inactive watches,
+ * so pausing is the only change needed.
+ *
+ * Returns false when the watch does not exist, so the route can 404 rather than
+ * pretending something happened.
+ */
+async function setWatchPaused(userId: string, watchId: string, paused: boolean): Promise<boolean> {
+  const watch = await watchRepository.findById(watchId);
+  if (!watch) return false;
+  if (watch.userId !== userId) {
+    logger.warn({ action: "watch.pause_denied", watchId, userId }, "watch pause denied");
+    throw new ForbiddenError("Not your watch");
+  }
+  await watchRepository.setActive(watchId, !paused);
+  logger.info({ action: paused ? "watch.paused" : "watch.resumed", watchId, userId }, "watch pause changed");
+  return true;
+}
+
 async function deleteWatch(userId: string, watchId: string): Promise<boolean> {
   const watch = await watchRepository.findById(watchId);
   if (!watch) return false;
