@@ -258,3 +258,91 @@ test.describe("unwatchable campgrounds", () => {
     expect(await prisma.watch.count()).toBe(0);
   });
 });
+
+/**
+ * Pausing one watch. The account-level email toggle silences everything at
+ * once; this is for "not this one right now" — keeping a carefully built list
+ * of campgrounds and its date pattern while it is not wanted.
+ */
+test.describe("pausing a watch", () => {
+  test.use({ user: { email: "pauser@example.com", firstName: "Pau", lastName: "Ser" } });
+
+  test("pauses and resumes from the list, keeping the watch", async ({ page }) => {
+    const park = await createPark({ name: "Big Basin Redwoods" });
+    const facility = await createFacility({ name: "Huckleberry", parkId: park.id });
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: "pauser@example.com" } });
+    const watch = await createWatch({ userId: user.id, facilityIds: facility.id });
+
+    await page.goto("/watches");
+    await page.getByRole("button", { name: "Pause" }).click();
+
+    await expect(page.getByText("Paused")).toBeVisible();
+    // Read back with a retry: the write lands on the server's connection and we
+    // are checking from another, so a single read can just miss it under load.
+    await expect
+      .poll(async () => (await prisma.watch.findUniqueOrThrow({ where: { id: watch.id } })).active)
+      .toBe(false);
+    // The watch and its campgrounds survive — only the email stops.
+    expect(await prisma.watchFacility.count({ where: { watchId: watch.id } })).toBe(1);
+
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+    await expect
+      .poll(async () => (await prisma.watch.findUniqueOrThrow({ where: { id: watch.id } })).active)
+      .toBe(true);
+  });
+
+  /**
+   * The limit exists to bound email volume, and a paused watch sends none — so
+   * pausing frees a slot rather than holding one.
+   */
+  test("a paused watch does not count against the per-user limit", async ({ page }) => {
+    const park = await createPark({ name: "Henry Coe" });
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: "pauser@example.com" } });
+    const facilities = [];
+    for (let i = 0; i <= MAX_WATCHES_PER_USER; i++) {
+      facilities.push(await createFacility({ name: `Camp ${i}`, parkId: park.id }));
+    }
+    for (let i = 0; i < MAX_WATCHES_PER_USER; i++) {
+      await createWatch({ userId: user.id, facilityIds: facilities[i]!.id });
+    }
+
+    // At the cap, another watch is refused.
+    await page.goto(`/watches/new?facilities=${facilities[MAX_WATCHES_PER_USER]!.id}`);
+    await page.getByLabel("Fri").check();
+    await page.getByRole("button", { name: "Create watch" }).click();
+    await expect(
+      page.getByText(`You already have ${MAX_WATCHES_PER_USER} watches, which is the limit`, { exact: false }),
+    ).toBeVisible();
+
+    // Pause one, and there is room again.
+    const first = await prisma.watch.findFirstOrThrow({ where: { userId: user.id }, orderBy: { createdAt: "asc" } });
+    const paused = await page.request.post("/watches", {
+      form: { intent: "pause", watchId: first.id, paused: "true" },
+    });
+    expect(paused.ok()).toBe(true);
+
+    await page.goto(`/watches/new?facilities=${facilities[MAX_WATCHES_PER_USER]!.id}`);
+    await page.getByLabel("Fri").check();
+    await page.getByRole("button", { name: "Create watch" }).click();
+    await expect(page).toHaveURL(/\/watches/);
+  });
+});
+
+test.describe("pausing a watch — cross-user authorization", () => {
+  test.use({ user: { email: "nosy@example.com", firstName: "No", lastName: "Sy" } });
+
+  test("returns 403 when pausing another user's watch", async ({ page }) => {
+    const owner = await createOwnerUser({ email: "owner2@example.com", firstName: "Own", lastName: "Er" });
+    const park = await createPark({ name: "Joshua Tree" });
+    const facility = await createFacility({ name: "Hidden Valley", parkId: park.id });
+    const theirs = await createWatch({ userId: owner.id, facilityIds: facility.id });
+
+    const response = await page.request.post("/watches", {
+      form: { intent: "pause", watchId: theirs.id, paused: "true" },
+    });
+
+    expect(response.status()).toBe(403);
+    expect((await prisma.watch.findUniqueOrThrow({ where: { id: theirs.id } })).active).toBe(true);
+  });
+});

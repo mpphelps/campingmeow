@@ -29,6 +29,10 @@ export const watchRepository = {
     });
   },
 
+  async setActive(id: string, active: boolean) {
+    return prisma.watch.update({ where: { id }, data: { active } });
+  },
+
   async delete(id: string) {
     return prisma.watch.delete({ where: { id } });
   },

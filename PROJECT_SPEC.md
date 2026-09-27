@@ -130,7 +130,10 @@ and a date pattern; we watch, and email them when a match opens.
   **not** a site type — a plain tent-image campsite routinely reports 35ft,
   because most drive-in sites fit an RV. It answers "will my trailer fit",
   which is a future filter, not an icon.
-- **Watch** — user, check-in weekdays, nights, active flag.
+- **Watch** — user, check-in weekdays, nights, `active`. Clearing `active`
+  pauses one watch: the notifier skips it, but the campgrounds and pattern
+  survive. A paused watch does not count against the per-user limit, since that
+  limit exists to bound email volume and a paused watch sends none.
 - **WatchFacility** — join table: the campgrounds one watch covers.
 - **AvailabilitySlot** — facility, unit id, unit name, date, `isFree`,
   `reported`, updated timestamp; unique per (facility, unit, date). Every night
@@ -315,7 +318,9 @@ EmailLog row. If RC blocks us, the sweep stops and mail stops with it.
   very likely gone, and mailing a booked site is worse than saying nothing.
 - **Email is a channel, not the subscription.** Turning it off leaves the watch
   running and the openings visible in-app; the notifier just skips that user.
-  Deactivating a watch is a separate action on `/watches`.
+- **Two levels of quiet.** The account-level email toggle silences everything;
+  pausing a single watch on `/watches` is for "not this one right now" and keeps
+  its campgrounds and pattern intact. Deleting is separate and irreversible.
 
 ### Unsubscribe
 

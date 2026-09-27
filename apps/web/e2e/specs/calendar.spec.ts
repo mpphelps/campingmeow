@@ -92,14 +92,21 @@ test.describe("watch calendar", () => {
 
     await expect(page.getByText("A stay matching your watch can start here")).toBeVisible();
 
-    // The available modifier lands on the day cell (it styles the inner wrapper
-    // via a `[&>div]:` rule), so the cell's class is what to assert on.
-    const cell = (date: Date) =>
-      page.locator("td").filter({ hasText: new RegExp(`^${date.getUTCDate()}$`) }).first();
+    // Assert on the set of days the calendar marks, not on individual cells.
+    // The available modifier applies `[&>div]:bg-primary/15` to the day cell, so
+    // the marked cells are the ones whose class mentions bg-primary.
+    //
+    // Deliberately not `cell(date).toHaveClass(...)`: only one month is
+    // rendered, so a date a week later may not be on screen at all, and
+    // matching cells by their day number picks up the same number from a
+    // neighbouring month. This test used to pass by accident for exactly that
+    // reason — it was asserting against a disabled cell from the previous month.
+    const marked = await page
+      .locator('td[class*="bg-primary"]')
+      .evaluateAll((cells) => cells.map((cell) => cell.getAttribute("data-day")));
 
-    await expect(cell(friA)).toHaveClass(/bg-primary/);
-    await expect(cell(friB)).not.toHaveClass(/bg-primary/);
     expect(isoDate(friA)).not.toBe(isoDate(friB));
+    expect(marked).toEqual([isoDate(friA)]);
   });
 });
 
