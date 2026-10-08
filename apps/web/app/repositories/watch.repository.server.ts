@@ -5,6 +5,7 @@ export const watchRepository = {
     userId: string;
     facilityIds: string[];
     checkinDays: number[];
+    checkinDates: Date[];
     nights: number;
   }) {
     const { facilityIds, ...watch } = data;
@@ -21,6 +22,33 @@ export const watchRepository = {
     return prisma.watch.findUnique({ where: { id } });
   },
 
+  /** For the edit form: the watch as it stands, campgrounds included. */
+  async findByIdWithFacilities(id: string) {
+    return prisma.watch.findUnique({
+      where: { id },
+      include: { facilities: { include: { facility: { include: { park: true } } } } },
+    });
+  },
+
+  /**
+   * Replace a watch's schedule and campgrounds in one step. The campground list
+   * is swapped wholesale — simpler than diffing, and a watch holds at most 20.
+   */
+  async update(
+    id: string,
+    data: { facilityIds: string[]; checkinDays: number[]; checkinDates: Date[]; nights: number },
+  ) {
+    const { facilityIds, ...schedule } = data;
+    return prisma.watch.update({
+      where: { id },
+      data: {
+        ...schedule,
+        facilities: { deleteMany: {}, create: facilityIds.map((facilityId) => ({ facilityId })) },
+      },
+      include: { facilities: { include: { facility: { include: { park: true } } } } },
+    });
+  },
+
   async listByUserId(userId: string) {
     return prisma.watch.findMany({
       where: { userId },
@@ -35,10 +63,6 @@ export const watchRepository = {
 
   async delete(id: string) {
     return prisma.watch.delete({ where: { id } });
-  },
-
-  async countActiveByUserId(userId: string) {
-    return prisma.watch.count({ where: { userId, active: true } });
   },
 
   async countActive() {

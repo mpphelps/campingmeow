@@ -18,13 +18,16 @@ and a date pattern; we watch, and email them when a match opens.
    lat/long. A typed address/city/ZIP is the primary input, geocoded server-side
    via OpenStreetMap Nominatim (free, 1 req/sec, cached); browser geolocation is
    secondary, because VPNs make it unreliable.
-4. **Watches.** Up to **10 active watches** per user, each covering up to **20
-   facilities** across any parks, with one shared date pattern: check-in
-   weekdays and nights (1–7). *"Any Friday, 2 nights, at Moro or San Mateo."*
-   A watch has **no date bounds** — it covers the scanner's rolling window and
-   moves with it, so nothing expires. Bounded watches were removed: the scanner
-   scans the same window regardless of what any watch asks for, so they bought
-   nothing and cost an expiry concept.
+4. **Watches.** Up to **10 live watches** per user (paused and expired don't
+   count), each covering up to **20 facilities** across any parks, plus nights
+   (1–7) and either:
+   - a **pattern** — check-in weekdays across the rolling window, never expires.
+     *"Any Friday, 2 nights, at Moro or San Mateo."*
+   - **dates** — up to 10 specific check-ins inside the window. *"Oct 16 and
+     Nov 6, 2 nights."* Expired once all have passed (derived, no job); stays
+     listed so it can be edited with new dates.
+   Dates cost the scanner nothing — it scans the whole window anyway. They
+   exist to cut email about weekends the user can't go.
 5. **Scanning.** The scanner is the only thing that talks to ReserveCalifornia.
    It sweeps **every bookable campground across a 63-day window**, continuously.
    Cost depends on the catalog, never on how many users or watches exist. See §4.

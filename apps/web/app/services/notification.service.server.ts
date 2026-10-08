@@ -3,6 +3,7 @@ import { EmailQuotaExceededError, emailSender } from "~/lib/email.server";
 import { DAILY_EMAIL_LIMIT, EMAIL_QUOTA_WINDOW_MS } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import { SITE_URL } from "~/lib/site";
+import { toIsoDates, wantsCheckin } from "~/lib/watch-schedule";
 import { availabilityRepository } from "../repositories/availability.repository.server";
 import { emailLogRepository } from "../repositories/email-log.repository.server";
 import { watchRepository } from "../repositories/watch.repository.server";
@@ -289,6 +290,15 @@ function findMatches(
   // stay. Without this the user gets told twice in one email.
   const seen = new Set<string>();
 
+  // Worked out once per watch rather than per event: the dates come back from
+  // Postgres as Date objects and every comparison wants yyyy-MM-dd.
+  const schedules = new Map(
+    watches.map((watch) => [
+      watch.id,
+      { checkinDays: watch.checkinDays, checkinDates: toIsoDates(watch.checkinDates) },
+    ]),
+  );
+
   for (const event of events) {
     const opened = fmt(event.date);
 
@@ -300,7 +310,9 @@ function findMatches(
         // The opened night could be any night of the stay, so walk back over
         // every check-in date that would include it.
         const checkin = addDays(opened, -offset);
-        if (!watch.checkinDays.includes(dayOfWeekIndex(checkin))) continue;
+        // A pattern watch wants this weekday; a dates watch wants this exact
+        // date. Shared with the /watches calendar so the two cannot disagree.
+        if (!wantsCheckin(schedules.get(watch.id)!, checkin)) continue;
 
         if (!stayIsFree(freeNights, event.facilityId, event.unitId, checkin, watch.nights)) continue;
 
@@ -371,10 +383,3 @@ function buildEmail(matches: Match[], unsubscribeToken: string) {
 function nightKey(facilityId: string, unitId: number, date: ISODate): string {
   return `${facilityId}:${unitId}:${date}`;
 }
-
-const DAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-
-function dayOfWeekIndex(date: ISODate): number {
-  return DAY_INDEX[dayOfWeek(date)]!;
-}
-

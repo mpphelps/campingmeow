@@ -1,5 +1,6 @@
 import { ValidationError } from "~/lib/errors";
 import { logger } from "~/lib/logger.server";
+import { checkinLabel, toIsoDates } from "~/lib/watch-schedule";
 import { authService, type AuthUser } from "./auth.service.server";
 import { availabilityService } from "./availability.service.server";
 import { notificationService, type NotifierStatus } from "./notification.service.server";
@@ -181,7 +182,11 @@ async function getDashboard(user: AuthUser): Promise<AdminDashboard> {
       lastEmailedAt: emailStats.get(u.id)?.lastAt.toISOString() ?? null,
       watches: u.watches.map((watch) => ({
         id: watch.id,
-        pattern: `${watch.checkinDays.map((d) => DAY_LABELS[d]).join(", ")} · ${watch.nights} night${watch.nights === 1 ? "" : "s"}`,
+        pattern: `${
+          watch.checkinDates.length > 0
+            ? toIsoDates(watch.checkinDates).map(checkinLabel).join(", ")
+            : watch.checkinDays.map((d) => DAY_LABELS[d]).join(", ")
+        } · ${watch.nights} night${watch.nights === 1 ? "" : "s"}`,
         campgrounds: watch.facilities.map((wf) => `${wf.facility.park.name} — ${wf.facility.name}`),
       })),
       joined: u.createdAt.toISOString().slice(0, 10),

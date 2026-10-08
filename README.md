@@ -109,7 +109,7 @@ Full setup, troubleshooting, and disaster-recovery runbooks live in **[`DEPLOYME
 
 - **User** — id, email (unique), firstName, lastName, timestamps. Created on first Auth0 login. `bannedAt` suspends an account without deleting anything.
 - **Park** / **Facility** — the ReserveCalifornia catalog, mirrored daily; RC ids kept as unique columns, disappeared records marked inactive.
-- **Watch** / **WatchFacility** — the campgrounds and date pattern a user cares about. No date bounds: a watch covers the rolling 63-day window.
+- **Watch** / **WatchFacility** — the campgrounds a user cares about, plus a weekly pattern or up to 10 specific check-in dates (expires once they've all passed; editable).
 - **AvailabilitySlot** — one row per (campground, site, night), rewritten only where it changed.
 - **AvailabilityEvent** — the append-only log of nights opening and closing; `notifiedAt` makes it the email outbox.
 

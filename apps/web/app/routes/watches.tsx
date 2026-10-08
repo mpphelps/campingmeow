@@ -18,14 +18,28 @@ export const loader = withAuth(async ({ request, user }: Route.LoaderArgs & { us
 
   // One campground at a time. A composite calendar would say "something is
   // free" without saying where — and you need the campground to book it.
-  const covered = watches.flatMap((watch) =>
-    watch.facilities.map((f) => ({ ...f, checkinDays: watch.checkinDays, nights: watch.nights })),
-  );
+  // Expired watches are left out: every check-in has passed, so their calendar
+  // could only ever be empty.
+  const covered = watches
+    .filter((watch) => !watch.expired)
+    .flatMap((watch) =>
+      watch.facilities.map((f) => ({
+        ...f,
+        checkinDays: watch.checkinDays,
+        checkinDates: watch.checkinDates,
+        nights: watch.nights,
+      })),
+    );
   const requested = new URL(request.url).searchParams.get("facility");
   const selected = covered.find((f) => f.facilityId === requested) ?? covered[0];
 
   const calendar = selected
-    ? await availabilityService.getWatchCalendar(selected.facilityId, selected.checkinDays, selected.nights)
+    ? await availabilityService.getWatchCalendar(
+        selected.facilityId,
+        selected.checkinDays,
+        selected.nights,
+        selected.checkinDates,
+      )
     : null;
 
   return {
@@ -70,11 +84,12 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
   const fetcher = useFetcher();
   const busy = fetcher.state !== "idle";
   const paused = !watch.active;
+  const nights = `${watch.nights} night${watch.nights === 1 ? "" : "s"}`;
 
   return (
     <ListItem
       className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${
-        busy ? "opacity-50" : paused ? "opacity-60" : ""
+        busy ? "opacity-50" : paused || watch.expired ? "opacity-60" : ""
       }`}
     >
       <div>
@@ -90,11 +105,19 @@ function WatchRow({ watch }: { watch: WatchListItem }) {
           ))}
         </div>
         <div className="mt-1 text-muted-foreground">
-          Check-in {watch.dayLabels.join(", ")} · {watch.nights} night{watch.nights === 1 ? "" : "s"} · next nine weeks
+          {watch.mode === "pattern"
+            ? `Check-in ${watch.dayLabels.join(", ")} · ${nights} · next nine weeks`
+            : watch.expired
+              ? `${nights} · every check-in date has passed`
+              : `Check-in ${watch.dateLabels.join(", ")} · ${nights}`}
+          {watch.expired && <span className="ml-2 font-medium text-foreground">Expired</span>}
           {paused && <span className="ml-2 font-medium text-foreground">Paused</span>}
         </div>
       </div>
       <div className="flex shrink-0 gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/watches/${watch.id}/edit`}>Edit</Link>
+        </Button>
         {/* Pause keeps the watch and its campgrounds; only the email stops. */}
         <fetcher.Form method="post">
           <input type="hidden" name="intent" value="pause" />
@@ -124,8 +147,9 @@ export default function Watches({ loaderData }: Route.ComponentProps) {
     <div>
       <h1 className="text-4xl font-semibold">My watches</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        We scan ReserveCalifornia for these patterns and email you when something opens up. Pausing a watch keeps it and
-        its campgrounds — it just stops the email until you resume.
+        We scan ReserveCalifornia for these stays and email you when something opens up. Pausing a watch keeps it and its
+        campgrounds — it just stops the email until you resume. A watch on specific dates expires once they have all
+        passed; edit it to pick new ones.
       </p>
 
       {watches.length === 0 ? (

@@ -12,6 +12,7 @@ export default [
     route("account-closed", "routes/account-closed.tsx"),
     route("watches", "routes/watches.tsx"),
     route("watches/new", "routes/watches.new.tsx"),
+    route("watches/:watchId/edit", "routes/watches.$watchId.edit.tsx"),
     route("admin", "routes/admin.tsx"),
   ]),
   route("health", "routes/health.tsx"),
