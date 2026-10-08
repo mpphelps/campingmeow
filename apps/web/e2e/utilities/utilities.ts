@@ -134,6 +134,8 @@ export type CreateWatchOverrides = {
   /** One facility id, or several — a watch can cover multiple campgrounds. */
   facilityIds: string | string[];
   checkinDays?: number[];
+  /** A dates watch. Pass `checkinDays: []` alongside, as the service would store it. */
+  checkinDates?: Date[];
   nights?: number;
   active?: boolean;
 };
@@ -144,6 +146,7 @@ export async function createWatch(overrides: CreateWatchOverrides) {
     data: {
       userId: overrides.userId,
       checkinDays: overrides.checkinDays ?? [5, 6],
+      checkinDates: overrides.checkinDates ?? [],
       nights: overrides.nights ?? 1,
       active: overrides.active ?? true,
       facilities: { create: facilityIds.map((facilityId) => ({ facilityId })) },

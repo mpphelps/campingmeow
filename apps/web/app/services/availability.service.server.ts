@@ -12,6 +12,7 @@ import type { FacilityStatus } from "@campingmeow/database";
 import { ValidationError } from "~/lib/errors";
 import { distanceMiles } from "~/lib/geo";
 import { toSiteTypes, type SiteType } from "~/lib/site-types";
+import { wantsCheckin } from "~/lib/watch-schedule";
 import { HORIZON_DAYS } from "~/lib/limits";
 import { logger } from "~/lib/logger.server";
 import {
@@ -25,8 +26,6 @@ import { parkRepository } from "../repositories/park.repository.server";
 // Pacing lives in the scanner's global rate gate (REQUEST_INTERVAL_MS in
 // packages/scanner/src/rate-limit.ts), not here — otherwise concurrent callers
 // each pace themselves and the real rate is however many are running at once.
-
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export interface SearchOpeningsInput {
   facilityIds: string[];
@@ -225,6 +224,8 @@ async function getWatchCalendar(
   facilityId: string,
   checkinDays: number[],
   nights: number,
+  /** yyyy-MM-dd. Non-empty means a dates watch, and replaces the weekday match. */
+  checkinDates: string[] = [],
 ): Promise<CalendarAvailability | null> {
   const base = await getFacilityCalendar(facilityId);
   if (!base) return null;
@@ -247,7 +248,14 @@ async function getWatchCalendar(
     unit.freeNights.add(fmt(slot.date));
   }
 
-  const openings = findOpenings([...units.values()], checkinDays, nights, base.windowStart, base.windowEnd);
+  const openings = findOpenings(
+    [...units.values()],
+    checkinDays,
+    nights,
+    base.windowStart,
+    base.windowEnd,
+    checkinDates,
+  );
   return { ...base, freeDates: openings.map((o) => o.checkin) };
 }
 
@@ -316,12 +324,15 @@ function findOpenings(
   nights: number,
   rangeStart: ISODate,
   rangeEnd: ISODate,
+  checkinDates: string[] = [],
 ): OpeningResult[] {
-  const wanted = new Set(checkinDays.map((d) => DAY_LABELS[d]));
+  const schedule = { checkinDays, checkinDates };
   const openings: OpeningResult[] = [];
 
   for (const checkin of eachDay(rangeStart, rangeEnd)) {
-    if (!wanted.has(dayOfWeek(checkin))) continue;
+    // Same test the notifier uses, so the calendar can never show a stay the
+    // email would not have mentioned.
+    if (!wantsCheckin(schedule, checkin)) continue;
     if (addDays(checkin, nights - 1) > rangeEnd) continue;
 
     const siteNames = units.filter((unit) => allNightsFree(unit.freeNights, checkin, nights)).map((unit) => unit.name);

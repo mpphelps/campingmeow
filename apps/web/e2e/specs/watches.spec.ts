@@ -53,7 +53,7 @@ test.describe("watches", () => {
     await expect(list.getByText("Sentinel")).toBeVisible();
   });
 
-  test("offers no date bounds — a watch always covers the whole window", async ({ page }) => {
+  test("a weekly pattern has no start or end date — it covers the rolling window", async ({ page }) => {
     const park = await createPark({ name: "Death Valley" });
     await createFacility({ name: "Furnace Creek", parkId: park.id });
 

@@ -7,10 +7,15 @@ import { cn } from "@campingmeow/ui/lib/utils"
 /**
  * Month grid, built on react-day-picker.
  *
- * We use it read-only — `mode` is left off, so there is no selection state and
- * days are not buttons. It earns its place for the parts that are tedious and
- * easy to get subtly wrong: week starts, leading/trailing days from adjacent
- * months, DST-safe date maths, and the grid's ARIA.
+ * Two uses. Without a `mode` it is read-only: no selection state, and days are
+ * plain cells rather than buttons — the availability calendars. With a `mode`
+ * (the watch form picks check-in dates with `mode="multiple"`) it renders
+ * react-day-picker's own day buttons, which carry the keyboard handling, focus
+ * management and `aria-selected` state that a hand-rolled button would lose.
+ *
+ * Either way it earns its place for the parts that are tedious and easy to get
+ * subtly wrong: week starts, leading/trailing days from adjacent months,
+ * DST-safe date maths, and the grid's ARIA.
  *
  * Day content is wrapped in a div rather than left as bare text in the cell.
  * Without it, a `modifiers` background paints the cell's padding too, so a run
@@ -46,6 +51,11 @@ function Calendar({
         week: "flex w-full",
         day: "size-10 p-0.5 text-center text-sm",
         outside: "text-muted-foreground/40",
+        // Only reached in selection mode; read-only days have no button.
+        day_button:
+          "flex size-full items-center justify-center rounded-md tabular-nums transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        selected: "[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary",
+        disabled: "text-muted-foreground/30 [&>button]:pointer-events-none",
         ...classNames,
       }}
       components={{
@@ -55,19 +65,24 @@ function Calendar({
           ) : (
             <ChevronRightIcon className="size-4" {...rest} />
           ),
-        DayButton: undefined,
-        Day: ({ day, modifiers, className: dayClassName, ...rest }) => (
-          <td className={dayClassName} {...rest}>
-            <div
-              className={cn(
-                "flex size-full items-center justify-center rounded-md tabular-nums",
-                modifiers.today && "font-semibold underline underline-offset-4",
-              )}
-            >
-              {day.date.getDate()}
-            </div>
-          </td>
-        ),
+        // Read-only cells, only when nothing can be selected. In a selection
+        // mode the library's own Day and DayButton are kept, or there would be
+        // nothing to click.
+        ...(props.mode === undefined && {
+          DayButton: undefined,
+          Day: ({ day, modifiers, className: dayClassName, ...rest }) => (
+            <td className={dayClassName} {...rest}>
+              <div
+                className={cn(
+                  "flex size-full items-center justify-center rounded-md tabular-nums",
+                  modifiers.today && "font-semibold underline underline-offset-4",
+                )}
+              >
+                {day.date.getDate()}
+              </div>
+            </td>
+          ),
+        }),
         ...components,
       }}
       {...props}

@@ -142,15 +142,18 @@ model Watch {
   id          String          @id @default(cuid())
   userId      String
   user        User            @relation(fields: [userId], references: [id])
-  // Check-in days of week, 0=Sun .. 6=Sat. Non-empty; enforced in the service.
-  checkinDays Int[]
+  // A watch is either a pattern or a set of dates, never both:
+  //   pattern — checkinDays (0=Sun .. 6=Sat), every matching day in the window
+  //   dates   — checkinDates, exactly these check-ins; checkinDays is empty
+  // Dates came back after being removed: they buy no scan cost, but a person
+  // free only on weekends 2 and 5 should not be emailed about 1, 3 and 4.
+  checkinDays  Int[]
+  checkinDates DateTime[] @default([]) @db.Date
   // Consecutive nights that must all be free (1-7; enforced in the service).
   nights      Int
-  // No date bounds by design: a watch always covers the full rolling booking
-  // window. Bounded watches meant an expiry concept (and an expired watch that
-  // silently kept its campgrounds on the hourly scan tier and blocked the
-  // per-user limit) for no real gain — the scanner scans the whole window
-  // regardless of what dates any one watch cares about.
+  // A dated watch expires when every check-in has passed. That is derived from
+  // checkinDates rather than stored, so there is no status to keep in sync and
+  // no job to run: the notifier can never match a past check-in anyway.
   active      Boolean         @default(true)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
